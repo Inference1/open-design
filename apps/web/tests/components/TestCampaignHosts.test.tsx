@@ -21,6 +21,7 @@ import { ProductionCampaignHover } from "../../src/components/ProductionCampaign
 import { ProductionCampaignModal } from "../../src/components/ProductionCampaignModal";
 import {
 	TestCampaignModal,
+	recordVisibleTestTouchpoint,
 	setTestRuntimeSession,
 	clearTestRuntimeSession,
 	type TestDecision,
@@ -817,5 +818,200 @@ describe("Test decisions at the existing host touchpoints", () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		});
 		expect(entryAcceptances()).toHaveLength(0);
+	});
+});
+
+
+describe("Test acceptance delivery", () => {
+	const placement = "opend.home.hover-entry" as const;
+	function session(): TestRuntimeSession {
+		const value = decision(placement);
+		return {
+			selectionKey: "deployment-1:snapshot-1",
+			deployment: {
+				id: "deployment-1",
+				activityId: "activity-four",
+				snapshotHash: value.snapshotHash,
+				snapshot: {
+					contentVersionId: value.content.id,
+					artifactHash: value.artifactHash!,
+					manifestHash: value.manifestHash!,
+					placementKeys: [placement],
+				},
+			},
+			context: value.testContext,
+			decisions: new Map([[placement, value]]),
+			isAuthorized: () => true,
+		};
+	}
+	function visible(value: TestRuntimeSession) {
+		recordVisibleTestTouchpoint(
+			value,
+			value.decisions.get(placement)!,
+			placement,
+		);
+	}
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		clearTestRuntimeSession();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+	it("retries a failed receipt without another visibility callback, then deduplicates", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(null, { status: 500 }))
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(999);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+	it("aborts a hanging receipt and retries within a bounded deadline", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockImplementationOnce(
+				(_url, init) =>
+					new Promise((_resolve, reject) =>
+						init?.signal?.addEventListener("abort", () =>
+							reject(new DOMException("Aborted", "AbortError")),
+						),
+					),
+			)
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(11_000);
+		expect(fetchMock.mock.calls[0]![1].signal.aborted).toBe(true);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+	it("bounds repeated failures and permits a later visibility trigger to recover", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockRejectedValue(new TypeError("Failed to fetch"));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(120_000);
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+		fetchMock.mockResolvedValue(new Response("{}", { status: 201 }));
+		visible(value);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(fetchMock).toHaveBeenCalledTimes(4);
+	});
+	it("does not retry an explicit authorization rejection", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(new Response(null, { status: 403 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(120_000);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+	it("cancels in-flight work on logout and ignores its late success", async () => {
+		let complete!: (response: Response) => void;
+		const fetchMock = vi
+			.fn()
+			.mockImplementationOnce(
+				() =>
+					new Promise<Response>((resolve) => {
+						complete = resolve;
+					}),
+			)
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		clearTestRuntimeSession();
+		expect(fetchMock.mock.calls[0]![1].signal?.aborted).toBe(true);
+		complete(new Response("{}", { status: 201 }));
+		await vi.advanceTimersByTimeAsync(0);
+		const next = session();
+		setTestRuntimeSession(next);
+		visible(next);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+	it("isolates a new snapshot and cancels the previous snapshot's queued retry", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(null, { status: 500 }))
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(0);
+		const nextContext = { ...value.context, deploymentId: "deployment-2" };
+		const nextDecision = {
+			...decision(placement),
+			deploymentId: "deployment-2",
+			snapshotHash: "sha256:new",
+			testContext: { ...nextContext, scheduleState: "active" as const },
+		};
+		const next = {
+			...session(),
+			selectionKey: "deployment-2:snapshot-2",
+			context: nextContext,
+			decisions: new Map([[placement, nextDecision]]),
+			deployment: {
+				...value.deployment,
+				id: "deployment-2",
+				snapshotHash: "sha256:new",
+			},
+		};
+		setTestRuntimeSession(next);
+		visible(next);
+		await vi.advanceTimersByTimeAsync(120_000);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(fetchMock.mock.calls[1]?.[0]).toContain(
+			"/test-deployments/deployment-2/acceptances",
+		);
+		visible(next);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("keeps retrying after a same-snapshot credential refresh", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(null, { status: 500 }))
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(0);
+		setTestRuntimeSession(session());
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+	it("does not send queued retries after authorization expires", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(new Response(null, { status: 500 }));
+		vi.stubGlobal("fetch", fetchMock);
+		let authorized = true;
+		const value = { ...session(), isAuthorized: () => authorized };
+		setTestRuntimeSession(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(0);
+		authorized = false;
+		await vi.advanceTimersByTimeAsync(120_000);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 });

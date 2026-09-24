@@ -78,7 +78,13 @@ type TestRuntimeValue = Omit<TestRuntimeSession, "isAuthorized">;
 
 let currentTestSession: TestRuntimeSession | null = null;
 const testRuntimeListeners = new Set<() => void>();
-const acceptanceState = new Map<string, "in-flight" | "accepted">();
+type AcceptanceDelivery = { controller: AbortController; accepted: boolean };
+const acceptanceState = new Map<string, AcceptanceDelivery>();
+function resetAcceptanceDelivery(): void {
+	for (const delivery of acceptanceState.values()) delivery.controller.abort();
+	acceptanceState.clear();
+}
+
 function subscribeTestRuntime(listener: () => void): () => void {
 	testRuntimeListeners.add(listener);
 	return () => testRuntimeListeners.delete(listener);
@@ -96,15 +102,22 @@ export function useTestRuntime(): TestRuntimeSession | null {
 export function setTestRuntimeSession(
 	session: TestRuntimeSession | null,
 ): void {
-	if (currentTestSession?.selectionKey !== session?.selectionKey)
-		acceptanceState.clear();
+	if (
+		currentTestSession?.selectionKey !== session?.selectionKey ||
+		currentTestSession?.context?.testerMemberId !==
+			session?.context?.testerMemberId ||
+		currentTestSession?.deployment?.snapshotHash !==
+			session?.deployment?.snapshotHash
+	)
+		resetAcceptanceDelivery();
 	currentTestSession = session;
 	for (const listener of testRuntimeListeners) listener();
 }
+
 export function clearTestRuntimeSession(): void {
 	if (!currentTestSession) return;
 	currentTestSession = null;
-	acceptanceState.clear();
+	resetAcceptanceDelivery();
 	for (const listener of testRuntimeListeners) listener();
 }
 
@@ -299,11 +312,13 @@ export async function recordTestAcceptance(
 		scenario: Scenario;
 		hostVersion?: string;
 	}>,
+	signal?: AbortSignal,
 ): Promise<unknown> {
 	const response = await fetch(
 		`/api/touchpoints/test-runtime/test-deployments/${encodeURIComponent(input.deploymentId)}/acceptances`,
 		{
 			method: "POST",
+			signal,
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
 				placementKey: input.placementKey,
@@ -337,7 +352,9 @@ export async function recordTestAcceptance(
 	);
 	if (!response.ok)
 		throw new Error(`touchpoint_test_acceptance_http_${response.status}`);
-	return response.json().catch(() => undefined);
+	const result = await response.json().catch(() => undefined);
+	signal?.throwIfAborted();
+	return result;
 }
 
 /** Called only after a current Test placement has mounted and become visible. */
@@ -356,24 +373,101 @@ export function recordVisibleTestTouchpoint(
 		return;
 	const key = `${session.deployment.id}:${session.deployment.snapshotHash ?? decision.snapshotHash ?? ""}:${placementKey}`;
 	if (acceptanceState.has(key)) return;
-	acceptanceState.set(key, "in-flight");
-	void recordTestAcceptance({
-		deploymentId: session.deployment.id,
-		snapshotHash: session.deployment.snapshotHash ?? decision.snapshotHash ?? "",
-		placementKey,
-		locale: decision.content.locale,
-		scenario: session.context.scenario,
-	})
-		.then(() => acceptanceState.set(key, "accepted"))
-		.catch((error) => {
-			acceptanceState.delete(key);
-			emitWebTouchpointDiagnostic({
-				code:
-					error instanceof Error
-						? error.message
-						: "touchpoint_test_acceptance_failed",
-			});
+	const delivery: AcceptanceDelivery = {
+		controller: new AbortController(),
+		accepted: false,
+	};
+	acceptanceState.set(key, delivery);
+	const snapshotHash =
+		session.deployment.snapshotHash ?? decision.snapshotHash ?? "";
+	const isCurrent = () => {
+		const current = currentTestSession;
+		const currentDecision = current?.decisions.get(placementKey);
+		return (
+			acceptanceState.get(key) === delivery &&
+			!delivery.controller.signal.aborted &&
+			current?.selectionKey === session.selectionKey &&
+			current.isAuthorized() &&
+			current.context.testerMemberId === session.context.testerMemberId &&
+			current.context.scenario === "realtime" &&
+			current.deployment.id === session.deployment.id &&
+			(current.deployment.snapshotHash ??
+				currentDecision?.snapshotHash ??
+				"") === snapshotHash &&
+			currentDecision?.testContext.scheduleState === "active"
+		);
+	};
+	// Visibility is evidence for this immutable snapshot. Credential refreshes may
+	// replace the session object, but cannot transfer that evidence to another one.
+	void deliverTestAcceptance(
+		{
+			deploymentId: session.deployment.id,
+			snapshotHash,
+			placementKey,
+			locale: decision.content.locale,
+			scenario: session.context.scenario,
+		},
+		delivery.controller.signal,
+		isCurrent,
+	)
+		.then((accepted) => {
+			if (accepted && isCurrent()) delivery.accepted = true;
+		})
+		.finally(() => {
+			if (!delivery.accepted && acceptanceState.get(key) === delivery)
+				acceptanceState.delete(key);
 		});
+}
+
+/** At most three attempts per visibility event, each with a ten-second deadline.
+ * Only transport/server failures retry; the server remains the acceptance gate.
+ */
+async function deliverTestAcceptance(
+	input: Parameters<typeof recordTestAcceptance>[0],
+	signal: AbortSignal,
+	isCurrent: () => boolean,
+): Promise<boolean> {
+	for (let attempt = 0; attempt < 3 && isCurrent(); attempt++) {
+		if (attempt > 0) {
+			await new Promise<void>((resolve) => {
+				const finish = () => {
+					clearTimeout(timer);
+					signal.removeEventListener("abort", finish);
+					resolve();
+				};
+				const timer = setTimeout(finish, attempt === 1 ? 1_000 : 3_000);
+				signal.addEventListener("abort", finish, { once: true });
+				if (signal.aborted) finish();
+			});
+			if (!isCurrent()) return false;
+		}
+		const request = new AbortController();
+		const cancel = () => request.abort();
+		signal.addEventListener("abort", cancel, { once: true });
+		const timeout = setTimeout(cancel, 10_000);
+		try {
+			await recordTestAcceptance(input, request.signal);
+			return isCurrent();
+		} catch (error) {
+			if (!isCurrent()) return false;
+			const code =
+				error instanceof Error
+					? error.message
+					: "touchpoint_test_acceptance_failed";
+			emitWebTouchpointDiagnostic({ code });
+			const status = /^touchpoint_test_acceptance_http_(\d+)$/.exec(code);
+			if (
+				status &&
+				Number(status[1]) < 500 &&
+				![408, 429].includes(Number(status[1]))
+			)
+				return false;
+		} finally {
+			clearTimeout(timeout);
+			signal.removeEventListener("abort", cancel);
+		}
+	}
+	return false;
 }
 
 export type TestTouchpointMountProps = Readonly<{
