@@ -3269,6 +3269,7 @@ export const th: Dict = {
   "fileViewer.generateAndCopyLink": "สร้างและคัดลอกลิงก์",
   "fileViewer.linkAccessTitle": "การเข้าถึงลิงก์",
   "fileViewer.linkAccessDescription": "ผู้รับสามารถดูตัวอย่างและความคิดเห็นที่มีอยู่ได้ แต่ไม่รวมบทสนทนาและโค้ด",
+  "fileViewer.publicLinkUnavailable": "เผยแพร่แล้ว แต่ลิงก์แชร์ไม่พร้อมใช้งานชั่วคราว",
   'fileViewer.publishSingleFileDescription': 'ทุกคนที่มีลิงก์สามารถดูออนไลน์ได้',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

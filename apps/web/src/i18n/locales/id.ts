@@ -3269,6 +3269,7 @@ export const id: Dict = {
   "fileViewer.generateAndCopyLink": "Buat dan salin tautan",
   "fileViewer.linkAccessTitle": "Akses tautan",
   "fileViewer.linkAccessDescription": "Penerima dapat melihat pratinjau dan komentar yang ada, bukan percakapan atau kode.",
+  "fileViewer.publicLinkUnavailable": "Sudah dipublikasikan, tetapi tautan berbagi untuk sementara tidak tersedia.",
   'fileViewer.publishSingleFileDescription': 'Siapa pun dengan tautan dapat melihatnya secara online.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

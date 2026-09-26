@@ -3269,6 +3269,7 @@ export const ko: Dict = {
   "fileViewer.generateAndCopyLink": "링크 생성 및 복사",
   "fileViewer.linkAccessTitle": "링크 액세스",
   "fileViewer.linkAccessDescription": "받는 사람은 미리보기와 기존 댓글을 볼 수 있습니다. 대화나 코드는 포함되지 않습니다.",
+  "fileViewer.publicLinkUnavailable": "게시되었지만 공유 링크를 일시적으로 사용할 수 없습니다.",
   'fileViewer.publishSingleFileDescription': '링크가 있는 사람은 누구나 온라인으로 볼 수 있습니다.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

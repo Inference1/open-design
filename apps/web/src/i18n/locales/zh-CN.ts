@@ -3441,6 +3441,7 @@ export const zhCN: Dict = {
   "fileViewer.generateAndCopyLink": "生成并复制链接",
   "fileViewer.linkAccessTitle": "链接访问",
   "fileViewer.linkAccessDescription": "接收者可查看预览和已有评论，不包含对话和代码。",
+  "fileViewer.publicLinkUnavailable": "已发布，但分享链接暂时不可用。",
   "fileViewer.publishSingleFileDescription": "任何拿到链接的人都可在线查看。",
   "fileViewer.openFileRequired": "打开文件后可用。",
   "fileViewer.publishFile": "发布文件",

@@ -3277,6 +3277,7 @@ export const de: Dict = {
   "fileViewer.generateAndCopyLink": "Link erstellen und kopieren",
   "fileViewer.linkAccessTitle": "Linkzugriff",
   "fileViewer.linkAccessDescription": "Empfänger können die Vorschau und vorhandene Kommentare sehen – nicht die Unterhaltung oder den Code.",
+  "fileViewer.publicLinkUnavailable": "Veröffentlicht, aber der Freigabelink ist vorübergehend nicht verfügbar.",
   'fileViewer.publishSingleFileDescription': 'Jeder mit dem Link kann sie online ansehen.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

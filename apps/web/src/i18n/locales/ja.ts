@@ -3269,6 +3269,7 @@ export const ja: Dict = {
   "fileViewer.generateAndCopyLink": "リンクを作成してコピー",
   "fileViewer.linkAccessTitle": "リンクアクセス",
   "fileViewer.linkAccessDescription": "受け取った人はプレビューと既存のコメントを閲覧できます。会話やコードは含まれません。",
+  "fileViewer.publicLinkUnavailable": "公開済みですが、共有リンクは一時的に利用できません。",
   'fileViewer.publishSingleFileDescription': 'リンクを知っている人は誰でもオンラインで閲覧できます。',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

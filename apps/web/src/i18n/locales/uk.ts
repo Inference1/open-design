@@ -3269,6 +3269,7 @@ export const uk: Dict = {
   "fileViewer.generateAndCopyLink": "Створити й скопіювати посилання",
   "fileViewer.linkAccessTitle": "Доступ за посиланням",
   "fileViewer.linkAccessDescription": "Отримувачі можуть переглядати попередній перегляд і наявні коментарі, але не переписку чи код.",
+  "fileViewer.publicLinkUnavailable": "Опубліковано, але посилання для спільного доступу тимчасово недоступне.",
   'fileViewer.publishSingleFileDescription': 'Будь-хто з посиланням може переглянути онлайн.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

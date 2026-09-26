@@ -3269,6 +3269,7 @@ export const hu: Dict = {
   "fileViewer.generateAndCopyLink": "Link létrehozása és másolása",
   "fileViewer.linkAccessTitle": "Hozzáférés linkkel",
   "fileViewer.linkAccessDescription": "A címzettek megtekinthetik az előnézetet és a meglévő megjegyzéseket, de nem a beszélgetést vagy a kódot.",
+  "fileViewer.publicLinkUnavailable": "Közzétéve, de a megosztási hivatkozás átmenetileg nem érhető el.",
   'fileViewer.publishSingleFileDescription': 'A linkkel bárki megtekintheti online.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

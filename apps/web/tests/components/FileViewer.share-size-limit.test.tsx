@@ -117,7 +117,7 @@ function stubFetch(
         const body =
           publishBody ??
           (publishStatus === 200
-            ? { url: 'https://open-design.ai/p/slug-1', slug: 'slug-1', fileName: 'index.html' }
+            ? { status: 'published', url: 'https://open-design.ai/p/slug-1', receipt: { filePath: 'index.html', slug: 'slug-1', publishedAt: 1, version: 1, versionId: 'v1' } }
             : { error: { message: 'WORKSPACE_IDENTITY_REQUIRED' } });
         return new Response(JSON.stringify(body), { status: publishStatus });
       }
@@ -136,9 +136,11 @@ function stubFetch(
   return fetchMock;
 }
 
-const publication = {
-  url: 'https://example.invalid/current-response', slug: 's15', fileName: 'index.html',
-};
+/** Contract shape of a successful POST (SharePublishResponse). */
+function publishResponse(url: string, slug: string) {
+  return { status: 'published', url, receipt: { filePath: 'index.html', slug, publishedAt: 1, version: 1, versionId: 'v1' } };
+}
+const publication = publishResponse('https://example.invalid/current-response', 's15');
 const props: ComponentProps<typeof FileViewer> = {
   projectKind: 'prototype', projectId: 's15-project', file: htmlFile(),
   liveHtml: '<html><body>S15</body></html>',
@@ -352,7 +354,7 @@ it.each(['file', 'project'] as const)('ignores a late publish after changing %s 
   expect(write).not.toHaveBeenCalled();
   expect(screen.queryByText(publication.url)).toBeNull();
   expect(document.querySelector('progress')!.value).toBeLessThanOrEqual(0.9);
-  const nextPublication = { ...publication, url: 'https://example.invalid/next-response', slug: 'next' };
+  const nextPublication = publishResponse('https://example.invalid/next-response', 'next');
   await act(async () => next.resolve(new Response(JSON.stringify(nextPublication))));
   expect(write.mock.calls).toEqual([[nextPublication.url]]);
   expect(screen.getByText(nextPublication.url)).toBeTruthy();
