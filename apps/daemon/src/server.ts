@@ -1129,6 +1129,7 @@ import {
 } from './collab/resource-principal.js';
 import { createCollabCloudClientFromEnv } from './integrations/collab-cloud.js';
 import { createCollabCloudService } from './collab/collab-cloud-service.js';
+import { createCommentInboundStore } from './collab/comment-inbound-store.js';
 import {
   commentRelayLocalBindingMatches,
   createCommentRelayOutboxStore,
@@ -4459,6 +4460,13 @@ export async function startServer({
     ? createCollabCloudService({
         client: collabCloudClient,
         commentOutbox: createCommentRelayOutboxStore(db),
+        // C3-LITE member comment pages (BO1), served by the AMR API through the
+        // Vela CLI. The HTTP relay (OD_COLLAB_CLOUD_URL) has no paged route, so
+        // it keeps the legacy pull. Rebuild of an invalid cursor is BO2; until
+        // then the legacy pull keeps covering that project.
+        ...(velaCliCollabClient ? { memberCommentStore: createCommentInboundStore(db) } : {}),
+        onMemberSyncRebuildRequired: ({ projectId, code }) =>
+          console.warn(`[od] collab member comment cursor needs rebuild (${code}) for project ${projectId}`),
         commentRelayScope: (projectId, filePath, context) => commentRelayScope({
           binding: getWorkspaceProjectByProjectId(db, projectId),
           context,
