@@ -6614,7 +6614,11 @@ function ReactComponentViewer({
   // only renders inside the already-published branch, so a failed FIRST publish
   // used to leave no trace on screen at all — the button simply returned to idle.
   const [publishFailureKey, setPublishFailureKey] = useState<PublicFilePublishFailureKey | null>(null);
-  const filePublished = publishedFileUrl.length > 0;
+  // Published is decided by the durable alias, not by the URL: without a
+  // configured Viewer origin a live publication has no URL, and treating it as
+  // unpublished would offer Publish again and upload a duplicate.
+  const filePublished = publishedFileSlug.length > 0;
+  const publishedLinkUnavailable = filePublished && publishedFileUrl.length === 0;
   // Public links need a signed-in workspace (any type); see canPublishPublicFile.
   const canPublishPublic = canPublishPublicFile(workspaceContext);
   const publicFileRequestSeqRef = useRef(0);
@@ -6848,7 +6852,7 @@ function ReactComponentViewer({
       ) {
         return;
       }
-      setPublishedFileUrl(response.url);
+      setPublishedFileUrl(response.url ?? '');
       setPublishedFileSlug(response.slug);
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
@@ -6863,7 +6867,7 @@ function ReactComponentViewer({
       }, publishRequestId);
       if (publicFileRequestSeqRef.current === requestSeq) {
         if (recoveryPublication) {
-          setPublishedFileUrl(recoveryPublication.url);
+          setPublishedFileUrl(recoveryPublication.url ?? '');
           setPublishedFileSlug(recoveryPublication.slug);
           setPublishLinkFeedback(null);
           setPublishFailureKey(null);
@@ -7221,10 +7225,17 @@ function ReactComponentViewer({
                         </div>
                         {filePublished ? (
                           <div className="chrome-publish-plain">
-                            <div className="chrome-publish-url" title={publishedFileUrl}>
+                            {publishedLinkUnavailable ? (
+                              <p className="chrome-publish-url" role="status">
+                                {t('fileViewer.publicLinkUnavailable')}
+                              </p>
+                            ) : (
+                              <div className="chrome-publish-url" title={publishedFileUrl}>
                                 {publishedFileUrl}
                               </div>
+                            )}
                               <div className="chrome-publish-actions">
+                                {publishedLinkUnavailable ? null : (
                                 <button
                                   type="button"
                                   className="chrome-publish-button"
@@ -7239,6 +7250,7 @@ function ReactComponentViewer({
                                       ? t('useEverywhere.copyFailed')
                                       : t('fileViewer.copyShareLink')}
                                 </button>
+                                )}
                                 <button
                                   type="button"
                                   className="chrome-publish-button chrome-publish-button--ghost"
@@ -8066,7 +8078,11 @@ function HtmlViewer({
   // only renders inside the already-published branch, so a failed FIRST publish
   // used to leave no trace on screen at all — the button simply returned to idle.
   const [publishFailureKey, setPublishFailureKey] = useState<SharePublishFailureKey | null>(null);
-  const filePublished = publishedFileUrl.length > 0;
+  // Published is decided by the durable alias, not by the URL: without a
+  // configured Viewer origin a live publication has no URL, and treating it as
+  // unpublished would offer Publish again and upload a duplicate.
+  const filePublished = publishedFileSlug.length > 0;
+  const publishedLinkUnavailable = filePublished && publishedFileUrl.length === 0;
   // Public links need a signed-in workspace (any type); see canPublishPublicFile.
   const canPublishPublic = canPublishPublicFile(workspaceContext);
   const publicFileRequestSeqRef = useRef(0);
@@ -8354,7 +8370,7 @@ function HtmlViewer({
       ) {
         return;
       }
-      setPublishedFileUrl(response.url);
+      setPublishedFileUrl(response.url ?? '');
       setPublishedFileSlug(response.slug);
       clearPublicFileProgressTimers();
       setPublishProgress(boundedPublishProgress(0, true));
@@ -8366,7 +8382,8 @@ function HtmlViewer({
       }, 1000);
       // Copy this response, not the previous render's URL. Clipboard failure
       // is not publication failure, and automatic copy is not a user click.
-      void copyPublicFileUrl(response.url);
+      // With no Viewer origin there is no link to copy; the panel says so.
+      if (response.url) void copyPublicFileUrl(response.url);
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
       const recoveryPublication = publicFileManualRevokePublication(error);
@@ -8382,7 +8399,7 @@ function HtmlViewer({
         clearPublicFileProgressTimers();
         setPublishProgress(null);
         if (recoveryPublication) {
-          setPublishedFileUrl(recoveryPublication.url);
+          setPublishedFileUrl(recoveryPublication.url ?? '');
           setPublishedFileSlug(recoveryPublication.slug);
           setPublishLinkFeedback(null);
           setPublishFailureKey(null);
@@ -15318,7 +15335,7 @@ function HtmlViewer({
   // guards the actual export/publish handlers.
   const rawCanShare = source !== null && isShareableArtifact;
   const shareGuideAppUserId = useShareGuideAppUserId();
-  const projectShareHistory = useProjectShareHistory(projectId, workspaceContext, JSON.stringify([file.name, publishedFileUrl]));
+  const projectShareHistory = useProjectShareHistory(projectId, workspaceContext, JSON.stringify([file.name, publishedFileSlug, publishedFileUrl]));
   const afterExportGuide = useAfterExportShareGuide({
     scopeKey: JSON.stringify([projectId, file.name, workspaceAccountScopedCacheKey(workspaceContext)]),
     appUserId: shareGuideAppUserId,
@@ -17429,6 +17446,7 @@ function HtmlViewer({
                         setWorkspaceShareAccess={setWorkspaceShareAccess}
                         canPublishPublic={canPublishPublic}
                         filePublished={filePublished}
+                        publishedLinkUnavailable={publishedLinkUnavailable}
                         publishedFileUrl={publishedFileUrl}
                         copyPublishedFileLink={copyPublishedFileLink}
                         publishLinkFeedback={publishLinkFeedback}

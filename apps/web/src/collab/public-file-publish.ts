@@ -20,7 +20,7 @@ export class PublicFilePublishError extends Error {
 
 export function publicFileManualRevokePublication(
   error: unknown,
-): PublicProjectFilePublication | null {
+): Omit<PublicProjectFilePublication, 'url'> & { url: string | null } | null {
   if (
     !(error instanceof PublicFilePublishError)
     || error.code !== PUBLIC_FILE_MANUAL_REVOKE_REQUIRED

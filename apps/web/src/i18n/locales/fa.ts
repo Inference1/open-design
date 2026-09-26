@@ -3277,6 +3277,7 @@ export const fa: Dict = {
   "fileViewer.generateAndCopyLink": "ایجاد و کپی پیوند",
   "fileViewer.linkAccessTitle": "دسترسی از طریق پیوند",
   "fileViewer.linkAccessDescription": "دریافت‌کنندگان می‌توانند پیش‌نمایش و نظرات موجود را ببینند، نه گفتگو یا کد را.",
+  "fileViewer.publicLinkUnavailable": "منتشر شد، اما پیوند اشتراک‌گذاری موقتاً در دسترس نیست.",
   'fileViewer.publishSingleFileDescription': 'هر کسی که پیوند را داشته باشد می‌تواند آن را آنلاین ببیند.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

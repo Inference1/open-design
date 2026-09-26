@@ -70,17 +70,33 @@ function htmlFile(): ProjectFile {
   } as ProjectFile;
 }
 
-/** 分享面板挂上之后才发的那几个请求;不喂它们 `canShare` 永远为假,按钮压根不出现。 */
-function stubFetch(published = false) {
+const PUBLISHED_URL = 'https://viewer.example.test/artifact/project-1/stable-slug';
+
+/** 分享面板挂上之后才发的那几个请求;不喂它们 `canShare` 永远为假,按钮压根不出现。
+ * `'unavailable'` models a daemon with no Viewer origin configured: the file is
+ * published (durable alias) but neither POST nor GET carries a URL. */
+function stubFetch(published: boolean | 'unavailable' = false) {
+  const linkUnavailable = published === 'unavailable';
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
     // Keep the production local social payload fallback instead of returning a malformed payload.
     if (url.includes('/social-share')) return new Response('{}', { status: 503 });
     if (url.includes('publish-public')) {
-      const publication = { url: 'https://open-design.ai/artifact/project-1/stable-slug', slug: 'stable-slug', fileName: 'index.html' };
-      if (init?.method === 'POST') return new Response(JSON.stringify(publication), { status: 200 });
+      const publication = { url: PUBLISHED_URL, slug: 'stable-slug', fileName: 'index.html' };
+      const link = { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' };
+      if (init?.method === 'POST') {
+        // Contract shape: SharePublishResponse.
+        const receipt = { filePath: 'index.html', slug: 'stable-slug', publishedAt: 1, version: 1, versionId: 'v1' };
+        return new Response(JSON.stringify(linkUnavailable
+          ? { status: 'published', receipt, link }
+          : { status: 'published', receipt, url: PUBLISHED_URL }), { status: 200 });
+      }
       if (init?.method === 'DELETE') return new Response(JSON.stringify({ ok: true }), { status: 200 });
-      return new Response(JSON.stringify({ publication: published ? publication : null }), { status: 200 });
+      // Contract shape: ProjectFilePublicShareResponse.
+      if (linkUnavailable) {
+        return new Response(JSON.stringify({ publication: null, link, slug: 'stable-slug', status: 'active', freshness: 'unknown' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ publication: published ? publication : null, status: published ? 'active' : 'none', freshness: 'unknown' }), { status: 200 });
     }
     if (url.includes('/deployments')) return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
     if (url.includes('/deploy/config')) return new Response(JSON.stringify({ providerId: 'cloudflare-pages', configured: false }), { status: 200 });
@@ -334,7 +350,7 @@ describe('G4 · retired HTML publishing section label', () => {
       ? { shareRequest: { nonce: 402, anchorId: 'g4-published-card' } } : {});
     if (origin === 'toolbar') fireEvent.click(toolbarAction('Share'));
     const stop = await screen.findByRole('button', { name: /stop sharing/i });
-    const url = 'https://open-design.ai/artifact/project-1/stable-slug';
+    const url = PUBLISHED_URL;
     const panel = document.querySelector<HTMLElement>('.chrome-unified-panel--share')!;
     expect(panel.querySelector('.chrome-publish-url')?.textContent).toBe(url);
     expect(panel.querySelector('.chrome-publish-url')).toHaveAttribute('title', url);
@@ -351,6 +367,61 @@ describe('G4 · retired HTML publishing section label', () => {
       '/api/projects/project-1/files/index.html/publish-public',
       expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ slug: 'stable-slug' }) }),
     );
+  });
+});
+
+describe('Viewer link unavailable (no Viewer origin configured)', () => {
+  const unavailableText = 'Published, but the share link is temporarily unavailable.';
+  const publishCalls = (fetchMock: ReturnType<typeof stubFetch>) => fetchMock.mock.calls.filter(([input, init]) =>
+    String(input).includes('publish-public') && init?.method === 'POST');
+
+  it.each(['toolbar', 'artifact-card'] as const)('%s hydrates a durable publication as published without a Publish CTA', async (origin) => {
+    const fetchMock = stubFetch('unavailable');
+    renderViewer(teamContext(), origin === 'artifact-card'
+      ? { shareRequest: { nonce: 501, anchorId: 'unavailable-card' } } : {});
+    if (origin === 'toolbar') fireEvent.click(toolbarAction('Share'));
+    expect(await screen.findByText(unavailableText)).toBeVisible();
+    // The Link access switch stays on: this is a live publication.
+    const stop = screen.getByRole('switch', { name: 'Link access' });
+    expect(stop).toHaveAttribute('aria-checked', 'true');
+    // Neither the Publish CTA nor any stale/copyable link is offered.
+    expect(screen.queryByRole('menuitem', { name: /Generate and copy link/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /copy share link/i })).toBeNull();
+    expect(document.querySelector('.chrome-publish-url')).toBeNull();
+    expect(publishCalls(fetchMock)).toEqual([]);
+    // The owner can still stop it by its stable alias.
+    fireEvent.click(stop);
+    await screen.findByRole('menuitem', { name: /Generate and copy link/i });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/project-1/files/index.html/publish-public',
+      expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ slug: 'stable-slug' }) }),
+    );
+    expect(publishCalls(fetchMock)).toEqual([]);
+  });
+
+  it('a first publish without a Viewer origin lands in the unavailable state and never re-offers Publish', async () => {
+    const fetchMock = stubFetch('unavailable');
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { userAgent: navigator.userAgent, clipboard: { writeText } });
+    // Start unpublished: the first GET says nothing is published yet.
+    const baseImpl = fetchMock.getMockImplementation()!;
+    let firstRead = true;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).includes('publish-public') && (init?.method ?? 'GET') === 'GET' && firstRead) {
+        firstRead = false;
+        return new Response(JSON.stringify({ publication: null, status: 'none', freshness: 'unknown' }), { status: 200 });
+      }
+      return baseImpl(input, init);
+    });
+    renderViewer(teamContext());
+    fireEvent.click(toolbarAction('Share'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Generate and copy link/i }));
+    await screen.findByText(unavailableText);
+    expect(screen.getByRole('switch', { name: 'Link access' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByRole('menuitem', { name: /Generate and copy link/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /copy share link/i })).toBeNull();
+    expect(publishCalls(fetchMock)).toHaveLength(1);
+    expect(writeText).not.toHaveBeenCalled();
   });
 });
 
@@ -390,7 +461,7 @@ describe('S12 · HTML share menu', () => {
     fireEvent.click(toolbarAction('Share'));
     await screen.findByRole('button', { name: /stop sharing/i });
     const panel = document.querySelector<HTMLElement>('.chrome-unified-panel--share')!;
-    expect(panel.querySelector('.chrome-publish-url')?.textContent).toBe('https://open-design.ai/artifact/project-1/stable-slug');
+    expect(panel.querySelector('.chrome-publish-url')?.textContent).toBe(PUBLISHED_URL);
     fireEvent.click(screen.getByRole('button', { name: 'More sharing options' }));
     expect(screen.getByRole('menuitem', { name: /Deploy to Vercel/i })).toBeEnabled();
     expect(screen.getByRole('menuitem', { name: /Deploy to Cloudflare Pages/i })).toBeEnabled();

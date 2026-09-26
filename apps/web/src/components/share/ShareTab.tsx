@@ -40,6 +40,7 @@ export function ShareTab({
   setWorkspaceShareAccess,
   canPublishPublic,
   filePublished,
+  publishedLinkUnavailable = false,
   publishedFileUrl,
   copyPublishedFileLink,
   publishLinkFeedback,
@@ -71,6 +72,7 @@ export function ShareTab({
   setWorkspaceShareAccess: (nextAccess: 'private' | 'workspace') => void;
   canPublishPublic: boolean;
   filePublished: boolean;
+  publishedLinkUnavailable?: boolean;
   publishedFileUrl: string;
   copyPublishedFileLink: () => Promise<void>;
   publishLinkFeedback: 'copied' | 'failed' | null;
@@ -159,7 +161,26 @@ export function ShareTab({
                       {filePublished && publishProgress !== null ? (
                         <progress max={1} value={publishProgress} aria-label={t('fileViewer.publishingFile')} />
                       ) : null}
-                      {filePublished ? (
+                      {filePublished && publishedLinkUnavailable ? (
+                        <div className="chrome-publish-plain">
+                          {/* Live publication without a Viewer origin: no link to show or
+                              copy, but the owner can still stop it by its slug. */}
+                          <p className={styles.publishHint} role="status">{t('fileViewer.publicLinkUnavailable')}</p>
+                          <div className="chrome-publish-actions">
+                            <button
+                              type="button"
+                              className="chrome-publish-button chrome-publish-button--ghost"
+                              disabled={viewerOnly || publishingPublicFile}
+                              title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
+                              onClick={() => {
+                                void unpublishCurrentFilePublic();
+                              }}
+                            >
+                              {t('fileViewer.unpublishFile')}
+                            </button>
+                          </div>
+                        </div>
+                      ) : filePublished ? (
                         <div className="chrome-publish-plain">
                           <div className={`chrome-publish-url${publishLinkFeedback === 'failed' ? ` ${styles.copyFallback}` : ''}`} title={publishedFileUrl}>
                               {publishedFileUrl}

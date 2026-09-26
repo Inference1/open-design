@@ -241,7 +241,8 @@ export interface RegisterCollabSyncRoutesDeps {
   readProjectShareState?: ReadProjectShareState;
   /** Durable local author proof for a not-yet-catalogued project. Never inferred from the requester. */
   resolveLocalPublicShareOwner?: (projectId: string, workspaceId: string) => string | null;
-  /** Reconstruct a previously unavailable presentation link without republishing. */
+  /** The only source of a publication's Viewer address on read; `null` when
+   * no Viewer origin is configured. Unwired means unavailable, never the stored URL. */
   resolvePublicShareLink?: (projectId: string, slug: string) => string | null;
   recordPublicFilePublication?: RecordPublicFilePublication;
   sharePublishing?: {
@@ -701,6 +702,22 @@ function sendWorkspaceVerificationFailure(
     message: verification.message,
     ...(verification.retryable ? { retryable: true } : {}),
   });
+}
+
+/** A row whose alias cannot form a Viewer address (for example a pre-alias
+ * slug) is still a live publication the owner must be able to see and stop,
+ * so an identity fault on read degrades to "link unavailable", not a 503. */
+function publicShareLinkOrNull(
+  resolve: ((projectId: string, slug: string) => string | null) | undefined,
+  projectId: string,
+  slug: string,
+): string | null {
+  if (!resolve) return null;
+  try {
+    return resolve(projectId, slug);
+  } catch {
+    return null;
+  }
 }
 
 export function registerCollabSyncRoutes(
@@ -1408,7 +1425,7 @@ export function registerCollabSyncRoutes(
         return res.status(502).json({ error: {
           code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
           message: `Publication metadata could not be saved; the public share may remain accessible${prepared.url ? ` at ${prepared.url}` : ''}. Use od project share stop to revoke it explicitly.`,
-          data: { ...publication, receipt: result.receipt },
+          data: { ...publication, projectId, receipt: result.receipt },
         } });
       }
       // Register/bind must never revive a stopped link. This foreground owner
@@ -1584,10 +1601,18 @@ export function registerCollabSyncRoutes(
       const history = await deps.readProjectShareState(scope);
       const remote = history.publications.find(item => item.sourceFilePath === filePath);
       const local = publicFilePublicationStore.get(scope);
-      const localUrl = local?.url ?? (local && deps.resolvePublicShareLink?.(projectId, local.slug)) ?? null;
+      // A row that outlived a stop made elsewhere is not a live publication:
+      // the owner should see the stopped state (and resume), not a dead link.
+      const live = local && remote && local.slug === remote.slug && remote.status !== 'stopped' ? local : null;
+      // The Viewer resolver is the only source of the address. A persisted
+      // `local.url` may predate the Viewer cut-over (a console address), so it
+      // only witnesses the slug and is never echoed back.
+      const liveUrl = live ? publicShareLinkOrNull(deps.resolvePublicShareLink, projectId, live.slug) : null;
       const response: import('@open-design/contracts').ProjectFilePublicShareResponse = {
-        publication: local && localUrl !== null && local.slug === remote?.slug ? { ...local, url: localUrl } : null,
-        ...(local && localUrl === null && local.slug === remote?.slug ? { link: { status: 'unavailable' as const, code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' as const } } : {}),
+        publication: live && liveUrl !== null ? { ...live, url: liveUrl } : null,
+        ...(live && liveUrl === null
+          ? { link: { status: 'unavailable' as const, code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' as const }, slug: live.slug }
+          : {}),
         status: remote?.status ?? 'none',
         freshness,
       };

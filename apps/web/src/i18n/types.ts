@@ -4185,6 +4185,7 @@ export interface Dict {
   'fileViewer.generateAndCopyLink': string;
   'fileViewer.linkAccessTitle': string;
   'fileViewer.linkAccessDescription': string;
+  'fileViewer.publicLinkUnavailable': string;
   'fileViewer.publishSingleFileDescription': string;
   'fileViewer.openFileRequired': string;
   'fileViewer.publishFile': string;

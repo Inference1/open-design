@@ -7204,6 +7204,9 @@ function printProjectShareHelp() {
                     Resume sharing through the same stable-alias lifecycle as the UI.
   od project share get <id> --path <file> [--json]
                     Read the current publication (null when not published).
+                    Without a configured Viewer origin (OD_SHARE_VIEWER_URL or
+                    OD_SHARE_VIEWER_URLS) a published file reports "link
+                    temporarily unavailable" plus its slug, and no URL.
   od project share status <id> [--path <file>] [--json]
                     Project binding history, or file lifecycle with --path.
   od project share stop <id> --path <file> --slug <slug> [--json]
@@ -7272,11 +7275,15 @@ async function runProjectShare(args) {
   if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
   if (projectStatus) return console.log(JSON.stringify(data, null, 2));
   if (['stop', 'retry-stop'].includes(action)) return console.log('Sharing stopped.');
+  // Same state as the UI: a durable publication with no Viewer origin shows no
+  // URL, but keeps its stable alias so the owner can still stop it.
+  const unavailableSlug = data.receipt?.slug ?? data.slug;
+  const unavailableHint = typeof unavailableSlug === 'string' && unavailableSlug ? ` (slug ${unavailableSlug})` : '';
   if (data.status === 'binding_pending') {
-    return console.log(`Content published; binding pending.${data.link?.status === 'unavailable' ? ' Link temporarily unavailable.' : ''}`);
+    return console.log(`Content published; binding pending.${data.link?.status === 'unavailable' ? ` Link temporarily unavailable${unavailableHint}.` : ''}`);
   }
   if (data.link?.status === 'unavailable') {
-    return console.log(`${data.status === 'stopped' ? 'Sharing stopped' : 'Published'}; link temporarily unavailable.`);
+    return console.log(`${data.status === 'stopped' ? 'Sharing stopped' : 'Published'}; link temporarily unavailable${unavailableHint}.`);
   }
   const publication = action === 'get' ? data.publication : data;
   console.log(publication ? publication.url : 'Not published.');

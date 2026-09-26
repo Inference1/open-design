@@ -6943,10 +6943,11 @@ describe('FileViewer SVG artifacts', () => {
     );
   });
 
-  it('exposes Stop sharing when publication persistence and compensation both fail', async () => {
+  it.each([
+    ['with a Viewer link', 'https://viewer.example.test/artifact/project-1/manual-revoke-slug'],
+    ['without a Viewer origin', null],
+  ] as const)('exposes Stop sharing when publication persistence and compensation both fail (%s)', async (_label, publicUrl) => {
     const context = teamWorkspaceContext();
-    const publicUrl =
-      'https://hub.example.test/api/v1/public/snapshots/manual-revoke-slug/files/index.html';
     const unpublishBodies: unknown[] = [];
     vi.stubGlobal(
       'fetch',
@@ -6971,7 +6972,7 @@ describe('FileViewer SVG artifacts', () => {
             JSON.stringify({
               error: {
                 code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
-                message: `The public link remains active at ${publicUrl}.`,
+                message: 'The public share may remain accessible.',
                 data: {
                   projectId: 'project-1',
                   url: publicUrl,
@@ -6997,7 +6998,9 @@ describe('FileViewer SVG artifacts', () => {
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
     fireEvent.click(await screen.findByRole('menuitem', { name: /Generate and copy link/i }));
 
-    expect(await screen.findByText(publicUrl)).toBeTruthy();
+    expect(await screen.findByText(publicUrl ?? 'Published, but the share link is temporarily unavailable.')).toBeTruthy();
+    // A live publication never falls back to the Publish row, with or without a URL.
+    expect(screen.queryByRole('menuitem', { name: /Generate and copy link/i })).toBeNull();
     const stopSharing = screen.getByRole('button', { name: /Stop sharing/i });
     fireEvent.click(stopSharing);
 

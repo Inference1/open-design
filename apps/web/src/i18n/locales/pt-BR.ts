@@ -3269,6 +3269,7 @@ export const ptBR: Dict = {
   "fileViewer.generateAndCopyLink": "Gerar e copiar link",
   "fileViewer.linkAccessTitle": "Acesso por link",
   "fileViewer.linkAccessDescription": "Os destinatários podem ver a prévia e os comentários existentes, não a conversa nem o código.",
+  "fileViewer.publicLinkUnavailable": "Publicado, mas o link de compartilhamento está temporariamente indisponível.",
   'fileViewer.publishSingleFileDescription': 'Qualquer pessoa com o link pode vê-lo online.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

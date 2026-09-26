@@ -3450,6 +3450,7 @@ export const zhTW: Dict = {
   "fileViewer.generateAndCopyLink": "產生並複製連結",
   "fileViewer.linkAccessTitle": "連結存取",
   "fileViewer.linkAccessDescription": "收件者可查看預覽與現有留言，不含對話與程式碼。",
+  "fileViewer.publicLinkUnavailable": "已發布，但分享連結暫時無法使用。",
   "fileViewer.publishSingleFileDescription": "任何取得連結的人都可以線上查看。",
   "fileViewer.openFileRequired": "打开文件后可用。",
   "fileViewer.publishFile": "發布檔案",

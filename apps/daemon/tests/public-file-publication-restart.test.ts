@@ -279,7 +279,8 @@ describe('public file publication restart lifecycle', () => {
       error: {
         code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
         data: {
-          url: `https://viewer.example.test/cloud/artifact/project-1/${fixtureShareSlug}`,
+          projectId: 'project-1',
+          url: `https://viewer.example.test/artifact/project-1/${fixtureShareSlug}`,
           slug: fixtureShareSlug,
           fileName: 'index.html',
         },
@@ -289,7 +290,7 @@ describe('public file publication restart lifecycle', () => {
       'od project share stop',
     );
     expect((publish.body.error as { message: string }).message).toContain(
-      `https://viewer.example.test/cloud/artifact/project-1/${fixtureShareSlug}`,
+      `https://viewer.example.test/artifact/project-1/${fixtureShareSlug}`,
     );
   });
 
@@ -331,7 +332,7 @@ describe('public file publication restart lifecycle', () => {
     const afterRevoke = await restartedDaemon.request('GET');
 
     expect(restored.body.publication).toEqual({
-      url: `https://viewer.example.test/cloud/artifact/project-1/${fixtureShareSlug}`,
+      url: `https://viewer.example.test/artifact/project-1/${fixtureShareSlug}`,
       slug: fixtureShareSlug,
       fileName: 'index.html',
     });

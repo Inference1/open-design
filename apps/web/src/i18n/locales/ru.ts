@@ -3269,6 +3269,7 @@ export const ru: Dict = {
   "fileViewer.generateAndCopyLink": "Создать и скопировать ссылку",
   "fileViewer.linkAccessTitle": "Доступ по ссылке",
   "fileViewer.linkAccessDescription": "Получатели могут видеть предпросмотр и существующие комментарии, но не переписку и не код.",
+  "fileViewer.publicLinkUnavailable": "Опубликовано, но ссылка для общего доступа временно недоступна.",
   'fileViewer.publishSingleFileDescription': 'Любой, у кого есть ссылка, может открыть её онлайн.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

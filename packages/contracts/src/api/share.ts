@@ -1070,6 +1070,9 @@ export interface ProjectFilePublicShareResponse {
   /** A durable publication can exist without a copyable URL. Re-reading after
    * configuration is repaired can recover its link without uploading again. */
   link?: SharePublishLinkUnavailable;
+  /** Stable alias of that durable publication, present only together with
+   * `link`, so the owner can still stop the share while no URL is shown. */
+  slug?: string;
   /** From the lifecycle source, not inferred from `publication`. */
   status: ShareStatus;
   /** From a content fingerprint comparison; `unknown` until one is available. */

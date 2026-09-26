@@ -3269,6 +3269,7 @@ export const tr: Dict = {
   "fileViewer.generateAndCopyLink": "Bağlantı oluştur ve kopyala",
   "fileViewer.linkAccessTitle": "Bağlantı erişimi",
   "fileViewer.linkAccessDescription": "Alıcılar önizlemeyi ve mevcut yorumları görebilir; sohbeti veya kodu göremez.",
+  "fileViewer.publicLinkUnavailable": "Yayımlandı, ancak paylaşım bağlantısı geçici olarak kullanılamıyor.",
   'fileViewer.publishSingleFileDescription': 'Bağlantıya sahip olan herkes çevrimiçi görüntüleyebilir.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

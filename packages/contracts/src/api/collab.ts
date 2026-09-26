@@ -46,8 +46,10 @@ export interface PublicProjectFilePublication {
 export const PUBLIC_FILE_MANUAL_REVOKE_REQUIRED =
   'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED' as const;
 
-/** Recovery data returned when a new public snapshot could not be persisted or redacted. */
-export interface PublicFileManualRevokeRequiredData extends PublicProjectFilePublication {
+/** Recovery data returned when a new public snapshot could not be persisted or redacted.
+ * `url` is `null` when no Viewer origin is configured; `slug` still stops it. */
+export interface PublicFileManualRevokeRequiredData extends Omit<PublicProjectFilePublication, 'url'> {
+  url: string | null;
   projectId: string;
 }
 

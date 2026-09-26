@@ -129,7 +129,7 @@ function stubFetch(
         const body =
           publishBody ??
           (publishStatus === 200
-            ? { url: 'https://open-design.ai/p/slug-1', slug: 'slug-1', fileName: 'index.html' }
+            ? { status: 'published', url: 'https://open-design.ai/p/slug-1', receipt: { filePath: 'index.html', slug: 'slug-1', publishedAt: 1, version: 1, versionId: 'v1' } }
             : { error: { message: 'WORKSPACE_IDENTITY_REQUIRED' } });
         return new Response(JSON.stringify(body), { status: publishStatus });
       }
@@ -228,6 +228,28 @@ function trackedOptions(name: string): unknown[] {
     .filter(([event]) => event === name)
     .map(([, , options]) => options);
 }
+
+describe('Viewer link unavailable (no Viewer origin configured)', () => {
+  it('ReactComponentViewer keeps a URL-less publication published: no Publish row, no copy, stop by slug', async () => {
+    const fetchMock = stubFetch({
+      publishBody: {
+        status: 'published',
+        receipt: { filePath: 'App.jsx', slug: 'slug-1', publishedAt: 1, version: 1, versionId: 'v1' },
+        link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' },
+      },
+    });
+    fireEvent.click(await openReactComponentPublishPanel());
+    await screen.findByText('Published, but the share link is temporarily unavailable.');
+    expect(screen.queryByRole('menuitem', { name: PUBLISH_ROW })).toBeNull();
+    expect(screen.queryByRole('button', { name: /copy share link/i })).toBeNull();
+    const posts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).includes('publish-public') && init?.method === 'POST');
+    expect(posts()).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: UNPUBLISH_ROW }));
+    await screen.findByRole('menuitem', { name: PUBLISH_ROW });
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE' && init.body === JSON.stringify({ slug: 'slug-1' }))).toBe(true);
+    expect(posts()).toHaveLength(1);
+  });
+});
 
 describe('publish flow analytics', () => {
   it('reports the publish click, the success result, and the copy-link click', async () => {
@@ -368,9 +390,9 @@ describe('publish flow analytics', () => {
               await publishGate;
               return new Response(
                 JSON.stringify({
+                  status: 'published',
                   url: 'https://open-design.ai/p/slug-1',
-                  slug: 'slug-1',
-                  fileName: 'index.html',
+                  receipt: { filePath: 'index.html', slug: 'slug-1', publishedAt: 1, version: 1, versionId: 'v1' },
                 }),
                 { status: 200 },
               );

@@ -3277,6 +3277,7 @@ export const ar: Dict = {
   "fileViewer.generateAndCopyLink": "إنشاء الرابط ونسخه",
   "fileViewer.linkAccessTitle": "الوصول عبر الرابط",
   "fileViewer.linkAccessDescription": "يمكن للمستلمين عرض المعاينة والتعليقات الحالية، دون المحادثة أو الكود.",
+  "fileViewer.publicLinkUnavailable": "تم النشر، لكن رابط المشاركة غير متاح مؤقتًا.",
   'fileViewer.publishSingleFileDescription': 'يمكن لأي شخص لديه الرابط عرضه عبر الإنترنت.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

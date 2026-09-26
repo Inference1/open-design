@@ -2,7 +2,6 @@ import {
   PUBLIC_FILE_MANUAL_REVOKE_REQUIRED,
   workspaceContextHasTeamIdentity,
   type PublicFileManualRevokeRequiredData,
-  type PublicProjectFilePublication,
   type ShareUnpublishResponse,
 } from '@open-design/contracts';
 import { boundedRequestErrorCode } from '../analytics/workspace';
@@ -149,7 +148,47 @@ export type WebDeployProjectFileResponse = DeployProjectFileResponse;
 export type WebCloudflarePagesDeploySelection = CloudflarePagesDeploySelection;
 export type WebCloudflarePagesZonesResponse = CloudflarePagesZonesResponse;
 
-export type WebPublicProjectFileResponse = PublicProjectFilePublication;
+/**
+ * What the share surfaces need from a durable public-file publication.
+ * `url` is `null` when the daemon has no Viewer origin configured: the file
+ * is still published (and stoppable by `slug`), but there is no link to show.
+ * Consumers must not treat a null `url` as "not published", or the UI would
+ * offer Publish again and upload a duplicate.
+ */
+export interface WebPublicFileShareLink {
+  slug: string;
+  url: string | null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/** Normalize the POST publish-public body (`SharePublishResponse`). */
+function publicFileShareLinkFromPublish(payload: unknown): WebPublicFileShareLink {
+  const body = (payload && typeof payload === 'object' ? payload : {}) as {
+    receipt?: { slug?: unknown };
+    url?: unknown;
+  };
+  const slug = nonEmptyString(body.receipt?.slug);
+  if (!slug) throw new Error('Publish response is missing its receipt slug');
+  return { slug, url: nonEmptyString(body.url) };
+}
+
+/** Normalize the GET publish-public body (`ProjectFilePublicShareResponse`). */
+function publicFileShareLinkFromRead(payload: unknown): WebPublicFileShareLink | null {
+  const body = (payload && typeof payload === 'object' ? payload : {}) as {
+    publication?: { url?: unknown; slug?: unknown } | null;
+    link?: { status?: unknown } | null;
+    slug?: unknown;
+  };
+  const publicationSlug = nonEmptyString(body.publication?.slug);
+  const publicationUrl = nonEmptyString(body.publication?.url);
+  if (publicationSlug && publicationUrl) return { slug: publicationSlug, url: publicationUrl };
+  const unavailableSlug = nonEmptyString(body.slug);
+  if (body.link?.status === 'unavailable' && unavailableSlug) return { slug: unavailableSlug, url: null };
+  return null;
+}
 
 export function isDeployProviderId(value: unknown): value is WebDeployProviderId {
   return typeof value === 'string' && (DEPLOY_PROVIDER_IDS as readonly string[]).includes(value);
@@ -1926,11 +1965,11 @@ function parsePublicFileManualRevokeData(
   const data = value as Partial<Record<keyof PublicFileManualRevokeRequiredData, unknown>>;
   if (
     typeof data.projectId !== 'string'
-    || typeof data.url !== 'string'
+    // No Viewer origin configured: the live publication has no URL, only a slug.
+    || (data.url !== null && (typeof data.url !== 'string' || !data.url))
     || typeof data.slug !== 'string'
     || typeof data.fileName !== 'string'
     || !data.projectId
-    || !data.url
     || !data.slug
     || !data.fileName
   ) {
@@ -1938,7 +1977,7 @@ function parsePublicFileManualRevokeData(
   }
   return {
     projectId: data.projectId,
-    url: data.url,
+    url: typeof data.url === 'string' ? data.url : null,
     slug: data.slug,
     fileName: data.fileName,
   };
@@ -1949,7 +1988,7 @@ export async function publishProjectFilePublic(
   fileName: string,
   workspaceContext?: WorkspaceCollabContext | null,
   requestId?: string,
-): Promise<WebPublicProjectFileResponse> {
+): Promise<WebPublicFileShareLink> {
   // Carry the active workspace identity so the daemon's `canShareProjectsForRequest`
   // gate (apps/daemon/src/routes/collab-sync.ts) reads the real permission bit
   // instead of falling back to a headerless context read — see
@@ -2007,14 +2046,14 @@ export async function publishProjectFilePublic(
       { failure: payload?.failure, daemonErrorCode: code },
     );
   }
-  return (await resp.json()) as WebPublicProjectFileResponse;
+  return publicFileShareLinkFromPublish(await resp.json());
 }
 
 export async function fetchProjectFilePublicPublication(
   projectId: string,
   fileName: string,
   workspaceContext?: WorkspaceCollabContext | null,
-): Promise<WebPublicProjectFileResponse | null> {
+): Promise<WebPublicFileShareLink | null> {
   const resp = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileName)}/publish-public`,
     workspaceContext ? { headers: workspaceProjectHeaders(workspaceContext) } : undefined,
@@ -2031,8 +2070,7 @@ export async function fetchProjectFilePublicPublication(
           : payload?.message;
     throw new Error(errorMessage || `Fetch publish state failed (${resp.status})`);
   }
-  const payload = (await resp.json()) as { publication?: WebPublicProjectFileResponse | null };
-  return payload.publication ?? null;
+  return publicFileShareLinkFromRead(await resp.json());
 }
 
 export async function unpublishProjectFilePublic(
