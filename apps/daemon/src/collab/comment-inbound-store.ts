@@ -11,10 +11,27 @@
 // token while a round is open, the resume token once a round is complete.
 // Tokens never expire, so persisting them across restarts is the contract.
 //
-// Rebuild (dropping a cursor, restarting from a snapshot, cleaning a stale
-// scope) belongs to BO2. This store only detects that a page no longer belongs
-// to the stored scope (scope token changed) and refuses to commit it,
-// returning `rebuild-required` with the cursor untouched.
+// A page whose scope token no longer matches the stored round is refused with
+// `rebuild-required` and the cursor untouched; the caller then `reset`s the
+// cursor and drains a fresh snapshot.
+//
+// Rebuild pruning (BO2). A per-scope ledger records every comment id the member
+// stream has delivered to this scope. The first page of a snapshot pass marks
+// the whole ledger unseen; each snapshot page marks the ids it carries (merged,
+// or skipped as malformed) seen. The terminal snapshot page — in the same
+// transaction that hands the cursor off to incremental — deletes the local rows
+// whose ids stayed unseen: cloud-origin rows the stream no longer has at the
+// snapshot watermark W. Consequences, each deliberate:
+// - Nothing is deleted before the snapshot completes, so a rebuild keeps the
+//   old rows visible and a crash mid-snapshot deletes nothing.
+// - Only ids the member stream delivered can be pruned. A comment written here
+//   and never synced, a share-page comment from the legacy pull, and a row
+//   another account learned are never in this scope's ledger.
+// - A write committed after W is not in the ledger until the incremental
+//   handoff delivers it, so a snapshot cannot prune it.
+//
+// Scope change (account switch, stop sharing) is `forgetProject`: the other
+// scopes' cursors and ledgers go, the local comment rows stay as local copies.
 
 import type Database from 'better-sqlite3';
 import type { CollabCloudComment } from '@open-design/contracts';
@@ -51,7 +68,16 @@ export interface MemberSyncCursor {
 export type MemberPageMerge = (comment: CollabCloudComment) => 'changed' | 'unchanged';
 
 export type ApplyMemberPageResult =
-  | { status: 'committed'; changed: number; deleted: number; skipped: number; cursor: MemberSyncCursor }
+  | {
+    status: 'committed';
+    changed: number;
+    /** Rows removed by tombstones. */
+    deleted: number;
+    /** Rows removed at snapshot completion because the snapshot lacked them. */
+    pruned: number;
+    skipped: number;
+    cursor: MemberSyncCursor;
+  }
   | { status: 'conflict' }
   | { status: 'rebuild-required'; reason: 'scope-changed' };
 
@@ -64,6 +90,16 @@ export interface CommentInboundStore {
    * legacy pull's to delete; member targets belong to the member page stream.
    */
   storedAuthorKind(projectId: string, commentId: string): 'member' | 'user' | null;
+  /**
+   * Drop the scope's cursor so the next request is a fresh snapshot. The
+   * ledger is kept: that snapshot's completion prunes against it.
+   */
+  reset(scope: MemberSyncScope): void;
+  /**
+   * Drop every member-sync cursor and ledger of `projectId` except `keep`'s.
+   * Local comment rows are never touched. Returns the cursors removed.
+   */
+  forgetProject(projectId: string, keep?: MemberSyncScope): number;
 }
 
 export interface ApplyMemberPageInput {
@@ -105,6 +141,41 @@ export function migrateCommentInboundStore(db: SqliteDb): void {
     CHECK((page_token IS NULL) <> (resume_token IS NULL)),
     PRIMARY KEY(workspace_id, member_id, team_id, project_id)
   )`);
+  // Ids the member stream delivered to a scope; `seen` is the current snapshot
+  // pass's mark (see the header comment).
+  db.exec(`CREATE TABLE IF NOT EXISTS comment_member_sync_known (
+    workspace_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    team_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    comment_id TEXT NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY(workspace_id, member_id, team_id, project_id, comment_id)
+  )`);
+}
+
+const SCOPE_WHERE = 'workspace_id=? AND member_id=? AND team_id=? AND project_id=?';
+
+export function resetMemberSyncCursor(db: SqliteDb, scope: MemberSyncScope): void {
+  assertScope(scope);
+  db.prepare(`DELETE FROM comment_member_sync_cursor WHERE ${SCOPE_WHERE}`).run(...scopeValues(scope));
+}
+
+export function forgetMemberSyncProject(db: SqliteDb, projectId: string, keep?: MemberSyncScope): number {
+  if (keep) assertScope(keep);
+  const run = db.transaction((): number => {
+    let removed = 0;
+    for (const table of ['comment_member_sync_cursor', 'comment_member_sync_known'] as const) {
+      const result = keep
+        ? db.prepare(`DELETE FROM ${table} WHERE project_id=?
+            AND NOT (workspace_id=? AND member_id=? AND team_id=?)`)
+          .run(projectId, keep.workspaceId, keep.memberId, keep.teamId)
+        : db.prepare(`DELETE FROM ${table} WHERE project_id=?`).run(projectId);
+      if (table === 'comment_member_sync_cursor') removed = result.changes;
+    }
+    return removed;
+  });
+  return run.immediate();
 }
 
 export function readMemberSyncCursor(db: SqliteDb, scope: MemberSyncScope): MemberSyncCursor | null {
@@ -166,16 +237,42 @@ export function applyMemberPage(db: SqliteDb, input: ApplyMemberPageInput): Appl
     if (current && current.scopeToken !== page.scopeToken) {
       return { status: 'rebuild-required', reason: 'scope-changed' };
     }
+    const snapshot = page.mode === 'snapshot';
+    // A fresh snapshot pass starts with every known id unseen.
+    if (snapshot && query.pageToken === undefined) {
+      db.prepare(`UPDATE comment_member_sync_known SET seen=0 WHERE ${SCOPE_WHERE}`).run(...scopeValues(scope));
+    }
+    const remember = db.prepare(`INSERT INTO comment_member_sync_known
+        (workspace_id, member_id, team_id, project_id, comment_id, seen) VALUES(?,?,?,?,?,1)
+      ON CONFLICT(workspace_id, member_id, team_id, project_id, comment_id) DO UPDATE SET seen=1`);
+    const forget = db.prepare(`DELETE FROM comment_member_sync_known WHERE ${SCOPE_WHERE} AND comment_id=?`);
     let changed = 0;
     let deleted = 0;
     for (const change of page.comments) {
       if (change.deleted === true) {
         if (applyTombstone(db, scope.projectId, change.id)) deleted += 1;
+        forget.run(...scopeValues(scope), change.id);
         continue;
       }
       const outcome = input.merge(change);
       if (outcome === 'changed') changed += 1;
       else if (outcome !== 'unchanged') throw new Error('Member comment merge was not acknowledged');
+      remember.run(...scopeValues(scope), change.id);
+    }
+    // A malformed snapshot copy still proves the comment exists at W: keep it.
+    if (snapshot) {
+      const markSeen = db.prepare(`UPDATE comment_member_sync_known SET seen=1 WHERE ${SCOPE_WHERE} AND comment_id=?`);
+      for (const item of page.skipped) if (item.id) markSeen.run(...scopeValues(scope), item.id);
+    }
+    let pruned = 0;
+    if (snapshot && !page.hasMore) {
+      // Same #5 witness as a tombstone (pin_seq), restricted to ids this
+      // scope's member stream delivered and this snapshot did not.
+      pruned = db.prepare(`DELETE FROM preview_comments
+        WHERE project_id=? AND pin_seq IS NOT NULL AND (author_kind IS NULL OR author_kind <> 'user')
+          AND id IN (SELECT comment_id FROM comment_member_sync_known WHERE ${SCOPE_WHERE} AND seen=0)`)
+        .run(scope.projectId, ...scopeValues(scope)).changes;
+      db.prepare(`DELETE FROM comment_member_sync_known WHERE ${SCOPE_WHERE} AND seen=0`).run(...scopeValues(scope));
     }
     const cursor: MemberSyncCursor = {
       // A terminal snapshot hands off to incremental (C3-LITE §3 handoff).
@@ -197,7 +294,7 @@ export function applyMemberPage(db: SqliteDb, input: ApplyMemberPageInput): Appl
         updated_at=excluded.updated_at`)
       .run(...scopeValues(scope), cursor.phase, cursor.pageToken, cursor.resumeToken, cursor.streamEpoch,
         cursor.scopeToken, cursor.watermarkSeq, cursor.skippedCount, Date.now());
-    return { status: 'committed', changed, deleted, skipped: page.skipped.length, cursor };
+    return { status: 'committed', changed, deleted, pruned, skipped: page.skipped.length, cursor };
   });
   return run.immediate();
 }
@@ -206,6 +303,8 @@ export function createCommentInboundStore(db: SqliteDb): CommentInboundStore {
   return {
     read: scope => readMemberSyncCursor(db, scope),
     apply: input => applyMemberPage(db, input),
+    reset: scope => resetMemberSyncCursor(db, scope),
+    forgetProject: (projectId, keep) => forgetMemberSyncProject(db, projectId, keep),
     storedAuthorKind: (projectId, commentId) => {
       const row = db.prepare('SELECT author_kind AS authorKind FROM preview_comments WHERE id=? AND project_id=?')
         .get(commentId, projectId) as { authorKind: string | null } | undefined;

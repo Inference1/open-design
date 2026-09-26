@@ -4462,11 +4462,15 @@ export async function startServer({
         commentOutbox: createCommentRelayOutboxStore(db),
         // C3-LITE member comment pages (BO1), served by the AMR API through the
         // Vela CLI. The HTTP relay (OD_COLLAB_CLOUD_URL) has no paged route, so
-        // it keeps the legacy pull. Rebuild of an invalid cursor is BO2; until
-        // then the legacy pull keeps covering that project.
+        // it keeps the legacy pull. An unusable cursor is rebuilt from a fresh
+        // snapshot in the same drain (BO2).
         ...(velaCliCollabClient ? { memberCommentStore: createCommentInboundStore(db) } : {}),
+        isMemberSyncProjectShared: (projectId) => {
+          const binding = getWorkspaceProjectByProjectId(db, projectId);
+          return binding?.visibility === 'team' && binding.resourceState !== 'deleted';
+        },
         onMemberSyncRebuildRequired: ({ projectId, code }) =>
-          console.warn(`[od] collab member comment cursor needs rebuild (${code}) for project ${projectId}`),
+          console.warn(`[od] collab member comment cursor rebuilding (${code}) for project ${projectId}`),
         commentRelayScope: (projectId, filePath, context) => commentRelayScope({
           binding: getWorkspaceProjectByProjectId(db, projectId),
           context,
