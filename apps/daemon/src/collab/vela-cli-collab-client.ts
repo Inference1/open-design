@@ -6,7 +6,14 @@ import type {
   CollabMemberRole,
   CollabPresenceMember,
 } from '@open-design/contracts';
-import { CollabCloudError } from '../integrations/collab-cloud.js';
+import {
+  assertMemberPageQuery,
+  CollabCloudError,
+  memberPageRebuildResult,
+  parseMemberPage,
+  type CollabCloudMemberPageQuery,
+  type CollabCloudMemberPageResult,
+} from '../integrations/collab-cloud.js';
 import {
   runVelaCommand,
   velaCommandStdout,
@@ -157,6 +164,31 @@ export function createVelaCliCollabClient(options: VelaCliCollabClientOptions = 
         seq: typeof payload.seq === 'number' ? payload.seq : 0,
         ...(typeof authorKey === 'string' && authorKey.trim() ? { authorKey: authorKey.trim() } : {}),
       };
+    },
+
+    /**
+     * One C3-LITE member page via `vela collab comment pull --mode … --json`.
+     * A failed command's `{error, errorCode, status}` stdout envelope becomes a
+     * CollabCloudError first, so cursor-invalidating codes map to
+     * `rebuild-required` exactly as on the HTTP transport.
+     */
+    async pullMemberPage(
+      teamId: string,
+      projectId: string,
+      query: CollabCloudMemberPageQuery,
+    ): Promise<CollabCloudMemberPageResult> {
+      const limit = assertMemberPageQuery(query);
+      const args = ['comment', 'pull', projectId, '--mode', query.mode, '--limit', String(limit), '--author-kinds', 'member', '--json'];
+      if (query.pageToken !== undefined) args.push('--page-token', query.pageToken);
+      if (query.resumeToken !== undefined) args.push('--resume-token', query.resumeToken);
+      let payload: unknown;
+      try {
+        payload = await runJson<unknown>(args, teamId);
+      } catch (error) {
+        return memberPageRebuildResult(error);
+      }
+      const page = parseMemberPage(payload, query.mode, projectId);
+      return { kind: 'page', page };
     },
 
     async pullComments(

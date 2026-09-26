@@ -104,6 +104,66 @@ function fixedContextProvider(context: WorkspaceCollabContext | null): Workspace
 
 // —— previewCommentToCloud mapping ————————————————————————————————————————————
 
+describe('Collab cloud member page adapter', () => {
+  const envelope = {
+    mode: 'snapshot', comments: [], hasMore: false, complete: true, nextPageToken: null,
+    resumeToken: 'c3l1.eyJr', scopeToken: 'c3ls.Qx', watermarkSeq: 151, scanThroughSeq: 151,
+    handoff: { sinceSeq: 151, resumeToken: 'c3l1.eyJr', scopeToken: 'c3ls.Qx' },
+    streamEpoch: 'k3J0cV9aQm1zYQ', latestSeq: 154, nextSeq: 151, snapshotAt: 151,
+  };
+  const fixtureClient = (body: unknown, status = 200, seen?: string[]) => createCollabCloudClient({
+    config: { baseUrl: 'https://example.test', token: null },
+    fetch: async (input, init) => {
+      seen?.push(String(input));
+      expect(new Headers(init?.headers).get('if-none-match')).toBeNull();
+      return new Response(JSON.stringify(body), { status });
+    },
+  });
+
+  it('uses the project page route with explicit member author kind and no conditional request', async () => {
+    const seen: string[] = [];
+    await expect(fixtureClient(envelope, 200, seen).pullMemberPage('team/a', 'project 1', { mode: 'snapshot' }))
+      .resolves.toMatchObject({ kind: 'page', page: { resumeToken: 'c3l1.eyJr', streamEpoch: 'k3J0cV9aQm1zYQ', skipped: [] } });
+    const url = new URL(seen[0]!);
+    expect(url.pathname).toBe('/api/v1/collab/projects/project%201/comments');
+    expect(url.search).toBe('?mode=snapshot&limit=100&authorKinds=member');
+  });
+
+  it('returns a typed page with minimal tombstones and per-item skips', async () => {
+    const live = cloudComment('live', { projectId: 'p1', seq: 4, authorKind: 'member', authorDisplayName: 'Ada',
+      author: { displayName: 'Ada' } } as any);
+    const body = { ...envelope, comments: [live, { id: 'gone', projectId: 'p1', seq: 5, deleted: true },
+      { ...live, id: 'bad', position: { x: Infinity, y: 0, width: 1, height: 1 } }] };
+    const result = await fixtureClient(body).pullMemberPage('t', 'p1', { mode: 'snapshot' });
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    expect(result.page.comments.map(c => c.id)).toEqual(['live', 'gone']);
+    expect(result.page.comments[1]).toEqual({ id: 'gone', projectId: 'p1', seq: 5, deleted: true });
+    expect(result.page.skipped).toEqual([{ index: 2, id: 'bad', seq: 4, reason: 'position invalid' }]);
+  });
+
+  it('accepts an empty intermediate page and rejects incoherent envelopes', async () => {
+    const intermediate = { ...envelope, mode: 'incremental', hasMore: true, complete: false, nextPageToken: 'c3l1.next',
+      resumeToken: null, handoff: null, snapshotAt: null };
+    await expect(fixtureClient(intermediate).pullMemberPage('t', 'p', { mode: 'incremental', resumeToken: 'c3l1.r' }))
+      .resolves.toMatchObject({ kind: 'page', page: { comments: [], hasMore: true, nextPageToken: 'c3l1.next' } });
+    for (const body of [{ ...envelope, handoff: null }, { ...envelope, streamEpoch: '' }, { comments: [] }]) {
+      await expect(fixtureClient(body).pullMemberPage('t', 'p', { mode: 'snapshot' })).rejects.toThrow(/Invalid member page response/);
+    }
+  });
+
+  it('maps cursor-invalidating errors to rebuild-required and rethrows everything else', async () => {
+    for (const [status, code] of [[409, 'CURSOR_STALE'], [409, 'SCOPE_CHANGED'], [400, 'INVALID_CURSOR']] as const) {
+      await expect(fixtureClient({ error: code, reason: 'x' }, status).pullMemberPage('t', 'p', { mode: 'snapshot' }))
+        .resolves.toEqual({ kind: 'rebuild-required', code, status });
+    }
+    await expect(fixtureClient({ error: 'INVALID_PAGE_REQUEST', reason: 'limit' }, 400).pullMemberPage('t', 'p', { mode: 'snapshot' }))
+      .rejects.toMatchObject({ status: 400, code: 'INVALID_PAGE_REQUEST' });
+    await expect(fixtureClient(envelope).pullMemberPage('t', 'p', { mode: 'incremental' })).rejects.toThrow('Invalid member page query');
+  });
+});
+
+
 describe('previewCommentToCloud', () => {
   it('uses the comment author as memberId and carries the anchor/drift fields', () => {
     const cloud = previewCommentToCloud(

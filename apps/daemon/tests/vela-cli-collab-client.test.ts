@@ -46,6 +46,48 @@ describe('Vela CLI collaboration client inbound comments', () => {
   });
 });
 
+describe('Vela CLI collaboration member pages', () => {
+  const live = { id: 'c1', projectId: 'p1', conversationId: 'conv', memberId: 'm1', seq: 3,
+    note: 'note', filePath: 'index.html', elementId: 'hero', selector: '#hero', label: 'hero', text: 'Hero', htmlHint: '<h1>',
+    position: { x: 0, y: 1, width: 2, height: 3 }, status: 'open', createdAt: 10, updatedAt: 11,
+    authorKind: 'member', authorDisplayName: 'Ada', author: { displayName: 'Ada', authorKey: 'key1' } };
+  const terminalIncremental = { mode: 'incremental', comments: [live, { id: 'gone', projectId: 'p1', seq: 4, deleted: true }],
+    hasMore: false, complete: true, nextPageToken: null, resumeToken: 'c3l1.r2', scopeToken: 'c3ls.Qx',
+    watermarkSeq: 4, scanThroughSeq: 4, handoff: null, streamEpoch: 'k3J0cV9aQm1zYQ', latestSeq: 4, nextSeq: 4, snapshotAt: null };
+
+  it('serializes exactly one member page and lifts nested author aliases', async () => {
+    const calls: string[][] = [];
+    const client = createVelaCliCollabClient({ run: async (args) => { calls.push(args); return JSON.stringify(terminalIncremental); } });
+    const result = await client.pullMemberPage('team', 'p1', { mode: 'incremental', resumeToken: 'c3l1.r1' });
+    expect(calls).toEqual([['comment', 'pull', 'p1', '--mode', 'incremental', '--limit', '100', '--author-kinds', 'member', '--json', '--resume-token', 'c3l1.r1']]);
+    expect(result).toMatchObject({ kind: 'page', page: { resumeToken: 'c3l1.r2', skipped: [],
+      comments: [{ id: 'c1', authorKey: 'key1', authorDisplayName: 'Ada' }, { id: 'gone', deleted: true }] } });
+  });
+
+  it('skips a malformed item but rejects an incoherent envelope', async () => {
+    const client = (page: unknown) => createVelaCliCollabClient({ run: async () => JSON.stringify(page) });
+    await expect(client({ ...terminalIncremental, comments: [{ ...live, author: { authorKey: 'bad' }, authorKey: 'other' }] })
+      .pullMemberPage('team', 'p1', { mode: 'incremental', resumeToken: 'r' }))
+      .resolves.toMatchObject({ kind: 'page', page: { comments: [], skipped: [{ id: 'c1', reason: 'author alias mismatch' }] } });
+    for (const page of [{ ...terminalIncremental, resumeToken: '' }, { ...terminalIncremental, handoff: { sinceSeq: 4, resumeToken: 'c3l1.r2', scopeToken: 'c3ls.Qx' } }, { error: 'CURSOR_STALE' }]) {
+      await expect(client(page).pullMemberPage('team', 'p1', { mode: 'incremental', resumeToken: 'r' })).rejects.toThrow(/Invalid member page response/);
+    }
+  });
+
+  it('maps the CLI failure envelope (C3-LITE §4) to rebuild-required or a typed error', async () => {
+    const failing = (stdout: string) => createVelaCliCollabClient({ run: async () => {
+      throw Object.assign(new Error('vela exited 1'), { stdout });
+    } });
+    await expect(failing('{"error":"cursor is stale","errorCode":"CURSOR_STALE","status":409}')
+      .pullMemberPage('team', 'p1', { mode: 'incremental', resumeToken: 'r' }))
+      .resolves.toEqual({ kind: 'rebuild-required', code: 'CURSOR_STALE', status: 409 });
+    await expect(failing('{"error":"bad limit","errorCode":"INVALID_PAGE_REQUEST","status":400}')
+      .pullMemberPage('team', 'p1', { mode: 'snapshot' }))
+      .rejects.toMatchObject({ status: 400, code: 'INVALID_PAGE_REQUEST' });
+  });
+});
+
+
 describe('Vela CLI collaboration client push receipt', () => {
   it('preserves the server author key instead of deriving a local identity', async () => {
     const authorKey = 'a'.repeat(64);
