@@ -18,11 +18,14 @@ export function createPublicSharePublishingFixture(
   resource: (args: string[], workspace: string) => Promise<string>,
   enqueue: Parameters<typeof createPublicFilePublicationRecorder>[2] = () => ({ enqueued: 0, skippedInbound: 0 }),
   options: { env?: NodeJS.ProcessEnv; configuredEnv?: Record<string, string>; pending?: boolean; failUpload?: boolean; failStop?: boolean; failResume?: boolean; commands?: string[][]; cloud?: FixtureShareCloud } = {},
-): Pick<RegisterCollabSyncRoutesDeps, 'sharePublishing' | 'readProjectShareState'> {
+): Pick<RegisterCollabSyncRoutesDeps, 'sharePublishing' | 'readProjectShareState' | 'resolvePublicShareLink'> {
   const outbox = createShareBindingOutbox(db);
   let ids = 0;
   const cloud: FixtureShareCloud = options.cloud ?? new Map();
-  return { readProjectShareState: async scope => {
+  const viewerEnv = options.env ?? { OD_SHARE_VIEWER_URL: 'https://viewer.example.test' };
+  // Publish and read share one resolver, as in server.ts.
+  const resolveLink = (projectId: string, slug: string) => resolvePublicShareViewerUrl(projectId, slug, viewerEnv, options.configuredEnv);
+  return { resolvePublicShareLink: resolveLink, readProjectShareState: async scope => {
     const publications = [...cloud.values()].filter(item => item.projectId === scope.projectId).map(({ projectId: _projectId, ...item }) => item);
     return { projectId: scope.projectId, bindingExists: publications.length > 0, hasEverShared: publications.length > 0, publications };
   }, sharePublishing: {
@@ -30,7 +33,7 @@ export function createPublicSharePublishingFixture(
     outbox,
     complete: createSharePublicationCompletion(db, createPublicFilePublicationRecorder(db, store, enqueue), outbox, true),
     prepare: async (scope, slug) => ({
-      url: resolvePublicShareViewerUrl(scope.projectId, slug, options.env ?? { OD_VELA_WEB_URL: 'https://viewer.example.test/cloud' }, options.configuredEnv),
+      url: resolveLink(scope.projectId, slug),
       run: async args => {
         options.commands?.push([...args]);
         if (args[0] === 'resource') {

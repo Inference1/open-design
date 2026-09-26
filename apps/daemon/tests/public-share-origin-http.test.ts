@@ -11,6 +11,7 @@ import { registerCollabSyncRoutes } from '../src/routes/collab-sync.js';
 import { migratePublicFilePublications, createSqlitePublicFilePublicationStore } from '../src/collab/public-file-publication-store.js';
 import { migrateCommentRelayOutbox } from '../src/collab/comment-relay-outbox.js';
 import { createShareBindingOutbox } from '../src/collab/share-binding-outbox.js';
+import { resolvePublicShareViewerUrl } from '../src/collab/public-share-viewer-url.js';
 import { createPublicSharePublishingFixture, fixtureShareSlug } from './public-share-publishing-fixture.js';
 
 function assertJsonObject(value: unknown): asserts value is Record<string, unknown> {
@@ -20,9 +21,12 @@ function assertJsonObject(value: unknown): asserts value is Record<string, unkno
 const cases: Array<{ name: string; env: NodeJS.ProcessEnv; configuredEnv: Record<string, string>; available: boolean; failUpload?: boolean }> = [
   { name: 'upload fails without origin', env: {}, configuredEnv: {}, available: false, failUpload: true },
   { name: 'unconfigured', env: {}, configuredEnv: {}, available: false },
-  { name: 'unmapped feature-test', env: { OPEN_DESIGN_AMR_PROFILE: 'prod', OD_VELA_WEB_URL: 'https://prod.example.test/cloud' }, configuredEnv: { OPEN_DESIGN_AMR_PROFILE: 'feature-test' }, available: false },
-  { name: 'invalid', env: { OD_VELA_WEB_URL: 'https://user:password@invalid.example.test' }, configuredEnv: {}, available: false },
-  { name: 'configured', env: { OD_VELA_WEB_URL: 'https://viewer.example.test/cloud' }, configuredEnv: {}, available: true },
+  { name: 'unmapped feature-test', env: { OPEN_DESIGN_AMR_PROFILE: 'prod', OD_SHARE_VIEWER_URL: 'https://prod.example.test' }, configuredEnv: { OPEN_DESIGN_AMR_PROFILE: 'feature-test' }, available: false },
+  // The console origin is not a Viewer origin: legacy configuration alone never yields a share link.
+  { name: 'legacy console only', env: { OD_VELA_WEB_URL: 'https://viewer.example.test/cloud' }, configuredEnv: {}, available: false },
+  { name: 'invalid', env: { OD_SHARE_VIEWER_URL: 'https://user:password@invalid.example.test' }, configuredEnv: {}, available: false },
+  { name: 'plain http', env: { OD_SHARE_VIEWER_URL: 'http://viewer.example.test' }, configuredEnv: {}, available: false },
+  { name: 'configured', env: { OD_SHARE_VIEWER_URL: 'https://viewer.example.test' }, configuredEnv: {}, available: true },
 ];
 for (const scenario of cases) it.each([false, true])(`${scenario.name}: HTTP publish with pending=%s keeps independent outcomes`, async pending => {
   const root = await mkdtemp(join(tmpdir(), 'od-origin-http-'));
@@ -47,7 +51,9 @@ for (const scenario of cases) it.each([false, true])(`${scenario.name}: HTTP pub
   }, undefined, { ...scenario, pending, commands });
   registerCollabSyncRoutes(app, { collab: runtime, publicFilePublicationStore: store, ...fixture,
     verifyWorkspaceRequest: async () => context, resolveSharedProject: async projectId => ({ projectId, ownerMemberId: 'owner', sharedAt: new Date(1).toISOString() }),
-    resolveProjectDir: () => root, resolvePublicShareLink: () => recoveredUrl,
+    resolveProjectDir: () => root,
+    // Production wiring: the resolver reads current configuration on every GET.
+    resolvePublicShareLink: (projectId, slug) => recoveredUrl ?? resolvePublicShareViewerUrl(projectId, slug, scenario.env, scenario.configuredEnv),
     readProjectShareState: async () => ({ projectId: 'p', bindingExists: true, hasEverShared: true, publications: [{ sourceFilePath: 'index.html', slug: fixtureShareSlug, status: 'active' }] }),
   });
   const server = createServer(app);
@@ -66,23 +72,27 @@ for (const scenario of cases) it.each([false, true])(`${scenario.name}: HTTP pub
     expect(body.receipt).toEqual({ filePath: 'index.html', slug: fixtureShareSlug, publishedAt: 1, version: 1, versionId: 'version-1', entryPath: 'index.html' });
     if (!scenario.available) expect(body.link).toEqual({ status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' });
     else expect(body).not.toHaveProperty('link');
-    if (scenario.available) expect(body.url).toBe(`https://viewer.example.test/cloud/artifact/p/${fixtureShareSlug}`);
+    if (scenario.available) expect(body.url).toBe(`https://viewer.example.test/artifact/p/${fixtureShareSlug}`);
     else expect(body).not.toHaveProperty('url');
     expect(body).not.toHaveProperty('error');
     expect(createShareBindingOutbox(db).list()).toHaveLength(pending ? 1 : 0);
     if (pending) expect(body.binding).toMatchObject({ retrying: true });
     const revision = store.getRevision(scope); expect(revision?.token).toBeTruthy();
-    expect(store.get(scope)?.url).toBe(scenario.available ? `https://viewer.example.test/cloud/artifact/p/${fixtureShareSlug}` : null);
+    expect(store.get(scope)?.url).toBe(scenario.available ? `https://viewer.example.test/artifact/p/${fixtureShareSlug}` : null);
     const read = await fetch(url); const readBody = await read.json(); assertJsonObject(readBody);
     expect(read.status).toBe(200); expect(readBody.status).toBe('active');
     if (!scenario.available) {
       expect(readBody.publication).toBeNull();
       expect(readBody.link).toEqual({ status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' });
-      recoveredUrl = `https://viewer.example.test/cloud/artifact/p/${fixtureShareSlug}`;
+      expect(readBody.slug).toBe(fixtureShareSlug);
+      recoveredUrl = `https://viewer.example.test/artifact/p/${fixtureShareSlug}`;
       const recovered = await (await fetch(url)).json();
       expect(recovered).toMatchObject({ publication: { url: recoveredUrl, slug: fixtureShareSlug }, status: 'active' });
       expect(recovered).not.toHaveProperty('link');
       expect(store.getRevision(scope)).toEqual(revision); expect(uploads).toBe(1);
+    } else {
+      expect(readBody).toMatchObject({ publication: { url: `https://viewer.example.test/artifact/p/${fixtureShareSlug}`, slug: fixtureShareSlug } });
+      expect(readBody).not.toHaveProperty('link');
     }
     // A separate connection reads the durable no-URL witness, not a mock object.
     const reopened = new Database(dbPath);
@@ -147,6 +157,60 @@ it.each([false, true])('HTTP owner republish resumes stopped alias; initial resu
     expect(uploads).toBe(2);
     expect((await fixture.readProjectShareState!(scope)).publications[0]).toMatchObject({ status: 'active', slug: fixtureShareSlug });
     expect(createShareBindingOutbox(db).list()).toEqual([]);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); runtime.dispose(); db.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+it.each([
+  { name: 'configured', env: { OD_SHARE_VIEWER_URL: 'https://viewer.example.test' } as NodeJS.ProcessEnv, wired: true },
+  { name: 'unconfigured', env: {} as NodeJS.ProcessEnv, wired: true },
+  { name: 'resolver not wired', env: { OD_SHARE_VIEWER_URL: 'https://viewer.example.test' } as NodeJS.ProcessEnv, wired: false },
+])('GET derives the link from the Viewer resolver, never from a stored legacy console URL ($name)', async ({ env, wired }) => {
+  let remoteStatus: 'active' | 'stopped' = 'active';
+  const root = await mkdtemp(join(tmpdir(), 'od-origin-get-'));
+  const db = new Database(':memory:');
+  migratePublicFilePublications(db); migrateCommentRelayOutbox(db);
+  const store = createSqlitePublicFilePublicationStore(db);
+  const context: WorkspaceCollabContext = {
+    workspaceId: 'w', workspaceMemberId: 'owner', workspaceType: 'personal', role: 'owner',
+    memberStatus: 'active', lifecycleState: 'active', billingState: 'active', planId: null, providerMode: 'platform_credits',
+    seatSummary: buildWorkspaceSeatSummary({ seatLimit: 1, usedSeats: 1 }), permissions: buildWorkspacePermissions({ role: 'owner', lifecycleState: 'active' }),
+  };
+  const scope = { resourceTeamId: 'w', ownerMemberId: 'owner', projectId: 'p', filePath: 'index.html' };
+  // A row persisted before the Viewer cut-over still carries the console address.
+  const legacyUrl = `https://console.example.test/cloud/artifact/p/${fixtureShareSlug}`;
+  store.set(scope, { slug: fixtureShareSlug, fileName: 'index.html', url: legacyUrl });
+  const runtime = createCollabRuntime({ workspaceContext: { current: async () => context } });
+  const app = express(); app.use(express.json());
+  registerCollabSyncRoutes(app, { collab: runtime, publicFilePublicationStore: store,
+    verifyWorkspaceRequest: async () => context, resolveSharedProject: async projectId => ({ projectId, ownerMemberId: 'owner', sharedAt: new Date(1).toISOString() }),
+    resolveProjectDir: () => root,
+    ...(wired ? { resolvePublicShareLink: (projectId: string, slug: string) => resolvePublicShareViewerUrl(projectId, slug, env) } : {}),
+    readProjectShareState: async () => ({ projectId: 'p', bindingExists: true, hasEverShared: true, publications: [{ sourceFilePath: 'index.html', slug: fixtureShareSlug, status: remoteStatus }] }),
+  });
+  const server = createServer(app);
+  try {
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('no listener');
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/projects/p/files/index.html/publish-public`);
+    const text = await response.text();
+    expect(response.status).toBe(200);
+    expect(text).not.toContain('console.example.test');
+    const body = JSON.parse(text) as Record<string, unknown>;
+    if (wired && env.OD_SHARE_VIEWER_URL) {
+      expect(body).toMatchObject({ publication: { url: `https://viewer.example.test/artifact/p/${fixtureShareSlug}`, slug: fixtureShareSlug, fileName: 'index.html' }, status: 'active' });
+      expect(body).not.toHaveProperty('link');
+    } else {
+      // Still published: the owner keeps the alias to stop it, but gets no copyable URL.
+      expect(body).toMatchObject({ publication: null, slug: fixtureShareSlug, status: 'active',
+        link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' } });
+    }
+    // Stopped elsewhere while the local row survived: neither a link nor an
+    // "unavailable" live state, so the UI offers resume instead of a dead stop.
+    remoteStatus = 'stopped';
+    const stopped = await (await fetch(`http://127.0.0.1:${address.port}/api/projects/p/files/index.html/publish-public`)).json() as Record<string, unknown>;
+    expect(stopped).toMatchObject({ publication: null, status: 'stopped' });
+    expect(stopped).not.toHaveProperty('link');
+    expect(stopped).not.toHaveProperty('slug');
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); runtime.dispose(); db.close(); await rm(root, { recursive: true, force: true }); }
 });
 

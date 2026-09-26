@@ -295,11 +295,12 @@ describe('od project CLI', () => {
   });
 
   it.each(['publish', 'resume', 'get'])('%s reports no-link success without printing undefined or declaring failure', async action => {
-    const body = { status: action !== 'get' ? 'published' : 'active', link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' }, ...(action === 'get' ? { publication: null, freshness: 'unknown' } : { receipt: { slug: 'stable', filePath: 'nested/index.html', versionId: 'v1', version: 1, publishedAt: 1, entryPath: 'index.html' } }) };
+    const body = { status: action !== 'get' ? 'published' : 'active', link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' }, ...(action === 'get' ? { publication: null, slug: 'stable', freshness: 'unknown' } : { receipt: { slug: 'stable', filePath: 'nested/index.html', versionId: 'v1', version: 1, publishedAt: 1, entryPath: 'index.html' } }) };
     stub = await startProjectStubServer(undefined, body);
     const args = ['project', 'share', action, 'project-1', '--path', 'nested/index.html', '--daemon-url', stub.baseUrl];
     const result = await runCli(args);
-    expect(result.code).toBe(0); expect(result.stdout.trim()).toBe('Published; link temporarily unavailable.');
+    expect(result.code).toBe(0); expect(result.stdout.trim()).toBe('Published; link temporarily unavailable (slug stable).');
+    expect(result.stdout).not.toContain('undefined');
     const json = await runCli([...args, '--json']);
     expect(json.code).toBe(0); expect(JSON.parse(json.stdout)).toEqual(body);
   });
