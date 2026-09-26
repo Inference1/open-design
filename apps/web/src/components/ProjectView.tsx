@@ -329,6 +329,11 @@ import {
   type ProjectResourceAuthority,
 } from '../collab/collab-context';
 import { persistCommentAnchors } from '../collab/comment-anchor-client';
+import {
+  createSingleflightRunner,
+  reconcileAttachedComments,
+  reconcilePreviewComments,
+} from '../comments/comment-list-refresh';
 import type { AnchorWriteBack } from '../comments';
 import { PluginDetailsModal } from './PluginDetailsModal';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
@@ -4057,7 +4062,7 @@ export function ProjectView({
           requestWorkspaceContext,
         ).then((comments) => {
           if (cancelled || previewCommentsGenerationRef.current !== commentsGeneration) return;
-          setPreviewComments(comments);
+          setPreviewComments((current) => reconcilePreviewComments(current, comments));
         }).catch(() => {
           if (cancelled || previewCommentsGenerationRef.current !== commentsGeneration) return;
           if (!reloadingCurrentConversation) setPreviewComments([]);
@@ -6122,7 +6127,17 @@ export function ProjectView({
     ],
   );
 
-  const refreshPreviewComments = useCallback(async () => {
+  // One comment-list read at a time for this view. The generation guard only
+  // discards a stale answer; it does not stop N triggers (SSE bursts, poll,
+  // visibility, stream reconnect) from each starting a full read. The runner
+  // does: a trigger during a read buys exactly one trailing read, run with the
+  // latest trigger's closure. A different conversation starts its own read.
+  // Note: the daemon announces a pull round before this read's `/pull`
+  // response returns, so a read that itself merged rows always earns one
+  // trailing read. That read is cheap and keeps other tabs' signals honest;
+  // do not suppress it.
+  const [runPreviewCommentsRead] = useState(createSingleflightRunner);
+  const readPreviewCommentsOnce = useCallback(async () => {
     if (!activeConversationId) return;
     const commentsGeneration = ++previewCommentsGenerationRef.current;
     const next = await fetchPreviewComments(
@@ -6132,13 +6147,18 @@ export function ProjectView({
       true,
     );
     if (previewCommentsGenerationRef.current !== commentsGeneration) return;
-    setPreviewComments(next);
-    setAttachedComments((current) =>
-      current
-        .map((attached) => next.find((comment) => comment.id === attached.id))
-        .filter((comment): comment is PreviewComment => Boolean(comment)),
-    );
+    // Unchanged comments keep their objects and an unchanged list keeps its
+    // array, so a refresh that found nothing new does not re-render.
+    setPreviewComments((current) => reconcilePreviewComments(current, next));
+    setAttachedComments((current) => reconcileAttachedComments(current, next));
   }, [project.id, activeConversationId, projectRunWorkspaceContext]);
+  const refreshPreviewComments = useCallback(
+    () => runPreviewCommentsRead(
+      `${project.id}\u0000${activeConversationId ?? ''}`,
+      readPreviewCommentsOnce,
+    ),
+    [runPreviewCommentsRead, project.id, activeConversationId, readPreviewCommentsOnce],
+  );
 
   // Expose the latest refresher to the SSE handler (defined earlier) so a
   // pushed `comment-changed` can re-fetch immediately.

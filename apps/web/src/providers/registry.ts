@@ -2881,6 +2881,15 @@ export async function restoreProjectFileVersion(
   }
 }
 
+/**
+ * Deadline for the remote half of an explicit comment pull. The web runs one
+ * comment-list read at a time, so a daemon pull that stalls (a slow CLI
+ * transport, a long member drain) must not hold every later refresh; past the
+ * deadline the read falls back to the local list, which the daemon keeps
+ * filling and announces with `comment-changed`.
+ */
+export const COMMENT_PULL_TIMEOUT_MS = 15_000;
+
 export async function fetchPreviewComments(
   projectId: string,
   conversationId: string,
@@ -2890,14 +2899,19 @@ export async function fetchPreviewComments(
   const url = `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/comments`;
   const headers = workspaceContext ? workspaceProjectHeaders(workspaceContext) : undefined;
   if (pullRemote && workspaceContext) {
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), COMMENT_PULL_TIMEOUT_MS);
     try {
-      const remote = await fetch(`${url}/pull`, { method: 'POST', headers });
+      const remote = await fetch(`${url}/pull`, { method: 'POST', headers, signal: controller.signal });
       if (remote.ok) {
         const result = (await remote.json()) as import('@open-design/contracts').ProjectCommentPullResponse;
         return result.comments;
       }
     } catch {
-      // The existing local list stays usable when remote sync is unavailable.
+      // The existing local list stays usable when remote sync is unavailable
+      // or slower than its deadline.
+    } finally {
+      clearTimeout(deadline);
     }
   }
   try {
