@@ -224,8 +224,8 @@ describe('C3-LITE member page drain', () => {
     const modes = cloud.requests.map(q => q.get('mode'));
     expect(modes).toEqual(['snapshot', 'snapshot', 'snapshot', 'incremental']);
     expect(cloud.requests.every(q => q.get('authorKinds') === 'member' && q.get('limit') === '100')).toBe(true);
-    // The first snapshot page is DESCENDING by comment id.
-    expect(onMerged.mock.calls.map(([arg]) => arg.inserted)).toEqual([100, 100, 50]);
+    // One notification for the whole drain round, not one per page.
+    expect(onMerged.mock.calls.map(([arg]) => arg.inserted)).toEqual([250]);
     const cursor = readMemberSyncCursor(db, SCOPE)!;
     expect(cursor).toMatchObject({ phase: 'incremental', pageToken: null, streamEpoch: EPOCH, scopeToken: SCOPE_TOKEN, watermarkSeq: 250 });
     expect(readToken(cursor.resumeToken!)).toMatchObject({ sinceSeq: 250 });
@@ -555,14 +555,60 @@ describe('C3-LITE member page drain', () => {
     expect(cursor.phase).toBe('snapshot');
     expect(readToken(cursor.pageToken!)).toMatchObject({ afterCommentId: pad(150) });
     // Page 1 landed whole; page 2's rows were rolled back with its cursor.
-    expect(onMerged.mock.calls[0]![0].inserted).toBe(100);
     // The legacy pull covered the gap meanwhile, so no comment is missing.
     expect(ids(db)).toHaveLength(250);
+    // Page 1's committed rows and the legacy gap fill share one notification.
+    expect(onMerged.mock.calls.map(([arg]) => arg.inserted)).toEqual([250]);
 
     cloud.requests = [];
     await expect(service.pullProject('p1', teamContext())).resolves.toBe(true);
     expect(cloud.requests[0]!.get('pageToken')).toBe(cursor.pageToken);
     expect(readMemberSyncCursor(db, SCOPE)).toMatchObject({ phase: 'incremental', pageToken: null });
+  });
+
+  it('notifies the web once per drain round, counting member pages and share-page comments together', async () => {
+    const db = seededDb();
+    const cloud = new FakeCloud();
+    for (let i = 0; i < 250; i += 1) cloud.write(pad(i));
+    cloud.write('share-1', { memberId: '' }, 'user');
+    const { service, onMerged } = harness(db, cloud);
+
+    await expect(service.pullProject('p1', teamContext())).resolves.toBe(true);
+
+    expect(cloud.requests.map(q => q.get('mode'))).toEqual(['snapshot', 'snapshot', 'snapshot', 'incremental']);
+    expect(onMerged.mock.calls).toEqual([[{ projectId: 'p1', inserted: 251 }]]);
+    // A round that changes nothing stays silent.
+    await service.pullProject('p1', teamContext());
+    expect(onMerged).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a failing merge listener without failing the round', async () => {
+    const db = seededDb();
+    const cloud = new FakeCloud();
+    cloud.write('a');
+    const { service, onMerged, onError } = harness(db, cloud);
+    const listenerError = new Error('sink closed');
+    onMerged.mockImplementation(() => { throw listenerError; });
+
+    await expect(service.pullProject('p1', teamContext())).resolves.toBe(true);
+    expect(onError).toHaveBeenCalledWith(listenerError);
+    expect(ids(db)).toEqual(['a']);
+  });
+
+  it('notifies for rows a round committed before its scope was lost', async () => {
+    const db = seededDb();
+    const cloud = new FakeCloud();
+    for (let i = 0; i < 150; i += 1) cloud.write(pad(i));
+    let current: WorkspaceCollabContext | null = teamContext();
+    let served = 0;
+    // The account switches while page 2 is in flight: page 1 already committed.
+    cloud.gate = async () => { served += 1; if (served === 2) current = { ...teamContext(), workspaceMemberId: 'm-other' }; };
+    const { service, onMerged } = harness(db, cloud, { resolve: () => current });
+
+    await expect(service.pullProject('p1', teamContext())).resolves.toBe(false);
+
+    expect(ids(db)).toHaveLength(100);
+    expect(onMerged.mock.calls).toEqual([[{ projectId: 'p1', inserted: 100 }]]);
   });
 
   it('never advances the cursor on a failed transport call', async () => {

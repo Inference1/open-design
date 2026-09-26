@@ -190,6 +190,11 @@ export interface CollabCloudServiceDeps {
    */
   memberPageRetryDelayMs?: (failures: number) => number;
   onError?: (error: unknown) => void;
+  /**
+   * At most once per pull round (member page drain + legacy pull), with the
+   * number of committed rows that round changed. A trailing rerun is its own
+   * round.
+   */
   onMerged?: (input: { projectId: string; inserted: number }) => void;
 }
 
@@ -888,6 +893,9 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
    */
   type MemberDrainOutcome = 'drained' | 'paused' | 'backoff' | 'scope-lost';
 
+  /** Committed, changed rows of one pull round, summed into one notification. */
+  type MergeRound = { changed: number };
+
   const memberScopeKey = (scope: MemberSyncScope) =>
     JSON.stringify([scope.workspaceId, scope.memberId, scope.teamId, scope.projectId]);
 
@@ -964,8 +972,9 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
    *   same drain. The snapshot's completion prunes rows the stream no longer
    *   has (see comment-inbound-store). A refused fresh snapshot, or a second
    *   rebuild in one drain, is an error and backs off instead of looping.
-   * - Merge notifications fire only after a page commits and only for rows
-   *   that actually changed, so a replayed page produces none.
+   * - Rows count toward the round's merge notification only after their page
+   *   commits and only when they actually changed, so a replayed page adds
+   *   nothing. The caller emits once per round (see `pollProject`).
    */
   async function drainMemberPages(
     store: CommentInboundStore,
@@ -973,6 +982,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     context: WorkspaceCollabContext,
     projectId: string,
     conversationId: string,
+    round: MergeRound,
   ): Promise<MemberDrainOutcome> {
     const scope: MemberSyncScope = {
       workspaceId: context.workspaceId,
@@ -997,7 +1007,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     const backoff = memberBackoff.get(key);
     if (backoff && now() < backoff.until) return 'backoff';
     try {
-      const outcome = await drainMemberScope(store, scope, key, projectId, conversationId);
+      const outcome = await drainMemberScope(store, scope, key, projectId, conversationId, round);
       if (outcome === 'drained') memberBackoff.delete(key);
       return outcome;
     } catch (error) {
@@ -1014,6 +1024,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     key: string,
     projectId: string,
     conversationId: string,
+    round: MergeRound,
   ): Promise<MemberDrainOutcome> {
     let rebuilt = false;
     const rebuild = (code: CollabCloudMemberRebuildCode, freshSnapshot: boolean): void => {
@@ -1055,21 +1066,50 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
           + page.skipped.map((item) => `${item.id ?? `#${item.index}`}@${item.seq ?? '?'} (${item.reason})`).join(', '),
         ));
       }
-      const touched = applied.changed + applied.deleted + applied.pruned;
-      if (touched > 0) deps.onMerged?.({ projectId, inserted: touched });
+      round.changed += applied.changed + applied.deleted + applied.pruned;
       if (!page.hasMore && page.mode === 'incremental') return 'drained';
     }
     return 'paused';
   }
 
-  /** Resolves `true` when a pull ran (even if it returned nothing new),
-   *  `false` when there was no local conversation to merge into, or when the
-   *  member page drain failed or paused early (its wake is not redeemed). */
+  /**
+   * One pull round: the member page drain plus the legacy pull. Every row the
+   * round commits is counted into one `onMerged` notification, emitted when
+   * the round settles — also when it ends early or throws, because rows that
+   * already committed are in local storage either way. A 3-page drain is one
+   * web refetch, not three.
+   */
   async function pollProject(
     identity: PullIdentity,
     scopeKey: string,
     projectId: string,
     requestContext: WorkspaceCollabContext,
+  ): Promise<boolean> {
+    const round: MergeRound = { changed: 0 };
+    try {
+      return await pollProjectRound(identity, scopeKey, projectId, requestContext, round);
+    } finally {
+      // A failing listener must neither mask the round's own error nor turn a
+      // successful round into an unredeemed wake.
+      if (round.changed > 0) {
+        try {
+          deps.onMerged?.({ projectId, inserted: round.changed });
+        } catch (error) {
+          deps.onError?.(error);
+        }
+      }
+    }
+  }
+
+  /** Resolves `true` when a pull ran (even if it returned nothing new),
+   *  `false` when there was no local conversation to merge into, or when the
+   *  member page drain failed or paused early (its wake is not redeemed). */
+  async function pollProjectRound(
+    identity: PullIdentity,
+    scopeKey: string,
+    projectId: string,
+    requestContext: WorkspaceCollabContext,
+    round: MergeRound,
   ): Promise<boolean> {
     const conversationId = deps.resolveLocalConversationId(projectId);
     // No local conversation to attach to yet (e.g. a member who pulled the
@@ -1091,7 +1131,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     if (!memberStore) forgetMemberSync(projectId);
     if (memberStore) {
       try {
-        const outcome = await drainMemberPages(memberStore, identity, requestContext, projectId, conversationId);
+        const outcome = await drainMemberPages(memberStore, identity, requestContext, projectId, conversationId, round);
         // This pull's identity is no longer (or not provably) the project's
         // scope: its legacy reply must not be merged either.
         if (outcome === 'scope-lost') return false;
@@ -1145,7 +1185,6 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       if (responseCursorKey === requestCursorKey) etags.set(responseCursorKey, result.etag);
       return !memberDrainIncomplete;
     }
-    let inserted = 0;
     for (const incoming of comments) {
       let comment = incoming;
       // Member records (including their tombstones, which the member stream
@@ -1189,14 +1228,13 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
         } else if (!allowed.has(comment.filePath)) continue;
       }
       const outcome = deps.mergeComment({ projectId, conversationId, comment });
-      if (outcome === 'changed') inserted += 1;
+      if (outcome === 'changed') round.changed += 1;
       else if (outcome !== 'unchanged') {
         throw new Error('Comment persistence did not acknowledge the pulled record');
       }
     }
     etags.set(responseCursorKey, result.etag);
     cursors.set(responseCursorKey, result.latestSeq);
-    if (inserted > 0) deps.onMerged?.({ projectId, inserted });
     return !memberDrainIncomplete;
   }
 

@@ -4587,6 +4587,9 @@ export async function startServer({
         // merges any teammate change into local storage (a new comment, a
         // strictly-newer edit/status change, or a delete tombstone all count),
         // push a thin `comment-changed` onto the project's existing events SSE.
+        // The service calls this at most once per pull round (a multi-page
+        // drain plus its legacy pull is one signal), so a burst of merged rows
+        // costs the web one list read, not one per page or row.
         // The open project view re-fetches the comment list on receipt, so the
         // owner sees a member's freshly-synced comment without waiting for the
         // web poll tick.
