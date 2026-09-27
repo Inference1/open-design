@@ -4583,8 +4583,8 @@ export async function startServer({
         resolveProjectWorkspaceContext: resolveBoundProjectWorkspaceContext,
         resolveLocalConversationId: (projectId) =>
           getProjectCommentAnchorConversationId(db, projectId),
-        mergeComment: ({ projectId, conversationId, comment }) =>
-          mergeSyncedPreviewComment(db, projectId, conversationId, comment),
+        mergeComment: ({ projectId, conversationId, comment, stream }) =>
+          mergeSyncedPreviewComment(db, projectId, conversationId, comment, { stream }),
         onError: (error) => console.warn('[od] collab cloud sync error:', error),
         onCommentPushed: ({ projectId, commentId, seq, memberId, authorKey }) => {
           confirmPreviewCommentPinSeq(db, projectId, commentId, seq);

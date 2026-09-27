@@ -1041,9 +1041,11 @@ export interface CollabCloudMembersResponse {
  * `slideIndex`) plus the drift-ladder fields (`anchorState`/`anchoredVersion`/
  * `lastGoodPosition`) ride along so a synced comment keeps pointing at the same
  * element on the receiver. The stream carries the comment's full lifecycle: a
- * create/edit is pushed with the current `updatedAt` (receivers apply the newest
- * by `updatedAt`), and a delete is pushed as a tombstone (`deleted: true`) that
- * removes the comment by `id` on every receiver.
+ * create/edit is pushed with the current `updatedAt`, and a delete is pushed as
+ * a tombstone (`deleted: true`) that removes the comment by `id` on every
+ * receiver. Receivers order revisions of one comment by the cloud `seq` (a
+ * replayed `seq` never overwrites a later one); `updatedAt` is the business
+ * last-writer-wins check for a revision the receiver has not seen yet.
  */
 export interface CollabCloudComment {
   /**

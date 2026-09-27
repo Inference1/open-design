@@ -146,6 +146,12 @@ export interface CollabCloudServiceDeps {
     projectId: string;
     conversationId: string;
     comment: CollabCloudComment;
+    /**
+     * The seq space `comment.seq` belongs to (relay team + stream). Seqs are
+     * only comparable within one stream: a rebuilt member stream renumbers,
+     * and a personal and a team relay count independently.
+     */
+    stream?: string;
   }) => SyncedCommentMergeResult;
   /**
    * Durable C3-LITE member-page cursor + atomic page commit. When present, a
@@ -1080,7 +1086,9 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
         scope,
         query,
         page,
-        merge: (comment) => deps.mergeComment({ projectId, conversationId, comment }),
+        merge: (comment) => deps.mergeComment({
+          projectId, conversationId, comment, stream: `member:${scope.teamId}:${page.streamEpoch}`,
+        }),
       });
       if (applied.status === 'rebuild-required') {
         rebuild('SCOPE_CHANGED', freshSnapshot);
@@ -1256,7 +1264,9 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
           if (!allowed.has(location.filePath)) continue;
         } else if (!allowed.has(comment.filePath)) continue;
       }
-      const outcome = deps.mergeComment({ projectId, conversationId, comment });
+      const outcome = deps.mergeComment({
+        projectId, conversationId, comment, stream: `legacy:${responseIdentity.teamId}`,
+      });
       if (outcome === 'changed') round.changed += 1;
       else if (outcome !== 'unchanged') {
         throw new Error('Comment persistence did not acknowledge the pulled record');
