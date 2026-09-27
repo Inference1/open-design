@@ -39,6 +39,7 @@ import {
   resolveDaemonPrewarmTargets,
   resolveWebPrewarmTargets,
 } from "./prewarm.js";
+import { resolvePackagedShareViewerEnv } from "./share-viewer.js";
 import { workspaceTeamTransportEnv } from "./workspace-team.js";
 
 const require = createRequire(import.meta.url);
@@ -645,6 +646,16 @@ export type PackagedDaemonSpawnEnvOptions = {
    */
   velaWebUrl?: string | null;
   velaWebUrls?: Record<string, string>;
+  /**
+   * Release channel of this packaged runtime; selects the channel's default
+   * share Viewer origin (see `PACKAGED_SHARE_VIEWER_URLS_BY_CHANNEL`).
+   */
+  releaseChannel?: string | null;
+  /**
+   * Launch environment whose explicit `OD_SHARE_VIEWER_URL(S)` overrides the
+   * channel default. The child env allowlist would otherwise drop them.
+   */
+  shareViewerLaunchEnv?: NodeJS.ProcessEnv;
 };
 
 /**
@@ -683,6 +694,7 @@ export function buildPackagedDaemonSpawnEnv(
     ...(options.velaWebUrls == null || Object.keys(options.velaWebUrls).length === 0
       ? {}
       : { OD_VELA_WEB_URLS: JSON.stringify(options.velaWebUrls) }),
+    ...resolvePackagedShareViewerEnv(options.releaseChannel, options.shareViewerLaunchEnv ?? {}),
     ...(options.appVersion == null ? {} : { OD_APP_VERSION: options.appVersion }),
     ...(options.mcpBootstrapCommand == null
       || options.mcpBootstrapCommand.length === 0
@@ -953,6 +965,8 @@ export async function startPackagedSidecars(
         posthogHost: options.posthogHost,
         velaWebUrl: options.velaWebUrl,
         velaWebUrls: options.velaWebUrls,
+        releaseChannel: channel,
+        shareViewerLaunchEnv: process.env,
       }),
       electronNodeCommand: options.electronNodeCommand,
       nodeCommand: options.nodeCommand,
