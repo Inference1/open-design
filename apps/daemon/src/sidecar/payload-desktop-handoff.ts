@@ -42,6 +42,11 @@ const SIDECAR_ONLY_ENV_KEYS = [
   "OD_SIDECAR_IPC_PATH",
   "OD_SIDECAR_NAMESPACE",
   "OD_SIDECAR_SOURCE",
+  // Share Viewer origin the packaged launcher derived for this daemon. The
+  // replacement desktop derives its own from its channel; forwarding it would
+  // turn a channel default into a sticky launch override.
+  "OD_SHARE_VIEWER_URL",
+  "OD_SHARE_VIEWER_URLS",
   SIDECAR_ENV.TOOLS_DEV_PARENT_PID,
 ] as const;
 
