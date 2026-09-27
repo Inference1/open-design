@@ -3276,6 +3276,7 @@ export const tr: Dict = {
   'fileViewer.publishingFile': 'Bağlantı oluşturuluyor…',
   "fileViewer.uploadingFile": "Yükleniyor",
   "fileViewer.publishingContinuesOnClose": "Bu paneli kapatmak yüklemeyi kesintiye uğratmaz.",
+  "fileViewer.publishMakesProjectTeamVisible": "Yayınladıktan sonra ekip üyeleri bu projeyi görebilecek.",
   'fileViewer.unpublishFile': 'Paylaşımı durdur',
   'fileViewer.shareEmptyStateTitle': 'Henüz paylaşılacak bir şey yok',
   'fileViewer.shareEmptyStateDescription': 'Bu dosyayı takım arkadaşlarınızla paylaşmak için bir takım oluşturun veya katılın',

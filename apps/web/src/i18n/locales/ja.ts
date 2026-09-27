@@ -3276,6 +3276,7 @@ export const ja: Dict = {
   'fileViewer.publishingFile': '作成中…',
   "fileViewer.uploadingFile": "アップロード中",
   "fileViewer.publishingContinuesOnClose": "このパネルを閉じてもアップロードは中断されません。",
+  "fileViewer.publishMakesProjectTeamVisible": "公開すると、チームメンバーもこのプロジェクトを閲覧できるようになります。",
   'fileViewer.unpublishFile': '共有を停止',
   'fileViewer.shareEmptyStateTitle': '共有できるものがまだありません',
   'fileViewer.shareEmptyStateDescription': 'チームを作成または参加すると、このファイルをメンバーと共有できます',

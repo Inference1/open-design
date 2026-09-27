@@ -3276,6 +3276,7 @@ export const th: Dict = {
   'fileViewer.publishingFile': 'กำลังสร้างลิงก์…',
   "fileViewer.uploadingFile": "กำลังอัปโหลด",
   "fileViewer.publishingContinuesOnClose": "การปิดแผงนี้จะไม่ขัดจังหวะการอัปโหลด",
+  "fileViewer.publishMakesProjectTeamVisible": "หลังเผยแพร่ สมาชิกในทีมจะมองเห็นโปรเจกต์นี้ได้",
   'fileViewer.unpublishFile': 'หยุดแชร์',
   'fileViewer.shareEmptyStateTitle': 'ยังไม่มีอะไรให้แชร์',
   'fileViewer.shareEmptyStateDescription': 'สร้างหรือเข้าร่วมทีมเพื่อแชร์ไฟล์นี้กับเพื่อนร่วมทีม',

@@ -3276,6 +3276,7 @@ export const ru: Dict = {
   'fileViewer.publishingFile': 'Создание ссылки…',
   "fileViewer.uploadingFile": "Загрузка",
   "fileViewer.publishingContinuesOnClose": "Закрытие этой панели не прервёт загрузку.",
+  "fileViewer.publishMakesProjectTeamVisible": "После публикации участники команды смогут видеть этот проект.",
   'fileViewer.unpublishFile': 'Прекратить доступ',
   'fileViewer.shareEmptyStateTitle': 'Пока нечем делиться',
   'fileViewer.shareEmptyStateDescription': 'Создайте команду или присоединитесь к ней, чтобы поделиться этим файлом с коллегами',

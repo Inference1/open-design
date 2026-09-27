@@ -3457,6 +3457,7 @@ export const zhTW: Dict = {
   "fileViewer.publishingFile": "產生中…",
   "fileViewer.uploadingFile": "上傳中",
   "fileViewer.publishingContinuesOnClose": "關閉面板不會中斷上傳。",
+  "fileViewer.publishMakesProjectTeamVisible": "發布後團隊成員可見。",
   "fileViewer.unpublishFile": "停止分享",
   "fileViewer.shareEmptyStateTitle": "暫時無法分享",
   "fileViewer.shareEmptyStateDescription": "建立或加入一個團隊,就能把這個檔案分享給同事",

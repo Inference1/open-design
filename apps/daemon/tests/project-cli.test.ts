@@ -304,6 +304,20 @@ describe('od project CLI', () => {
     const json = await runCli([...args, '--json']);
     expect(json.code).toBe(0); expect(JSON.parse(json.stdout)).toEqual(body);
   });
+  it('publish that made a private team project team-visible prints the same notice as the UI and keeps the JSON field', async () => {
+    const body = { status: 'published', url: 'https://viewer.example.test/s', madeTeamVisible: true, receipt: { slug: 'stable', filePath: 'nested/index.html', versionId: 'v1', version: 1, publishedAt: 1, entryPath: 'index.html' } };
+    stub = await startProjectStubServer(undefined, body);
+    const args = ['project', 'share', 'publish', 'project-1', '--path', 'nested/index.html', '--daemon-url', stub.baseUrl];
+    const human = await runCli(args);
+    expect(human.code).toBe(0);
+    expect(human.stdout.trim()).toBe('https://viewer.example.test/s');
+    expect(human.stderr).toBe('[project] notice: this project is now visible to your team members.\n');
+    const json = await runCli([...args, '--json']);
+    expect(json.code).toBe(0); expect(json.stderr).toBe('');
+    expect(JSON.parse(json.stdout)).toMatchObject({ madeTeamVisible: true });
+    const help = await runCli(['project', 'share', '--help']);
+    expect(help.stdout).toContain('"madeTeamVisible": true');
+  });
   it('retry-stop targets the persisted file intent, never the deleted project DELETE route', async () => {
     stub = await startProjectStubServer();
     const result = await runCli(['project', 'share', 'retry-stop', 'deleted-project', '--path', 'pages/local.html', '--slug', 'stable', '--workspace', 'ws-1', '--workspace-member', 'member-1', '--daemon-url', stub.baseUrl, '--json']);

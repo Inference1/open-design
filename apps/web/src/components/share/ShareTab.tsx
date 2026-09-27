@@ -99,6 +99,9 @@ export function ShareTab({
     setOpen: setShareAccessMenuOpen,
   });
 
+  const showsTeamVisibilityNotice = !filePublished && !publishingPublicFile && !viewerOnly
+    && workspaceContext?.workspaceType === 'team' && shareAccess === 'private';
+
   // The host owns clipboard outcomes and their reset timer; only await its action here.
   async function handleCopyPublishedFileLink() {
     if (copyInFlight.current || streaming) return;
@@ -158,6 +161,11 @@ export function ShareTab({
                         </div>
                         <p className={styles.linkAccessDescription}>{t('fileViewer.linkAccessDescription')}</p>
                       </div>
+                      {showsTeamVisibilityNotice ? (
+                        // Decision 67 #11: a public link registers a private team-workspace
+                        // project in the team catalog, so say so before the first publish.
+                        <p className={styles.publishHint} role="note">{t('fileViewer.publishMakesProjectTeamVisible')}</p>
+                      ) : null}
                       {filePublished && publishProgress !== null ? (
                         <progress max={1} value={publishProgress} aria-label={t('fileViewer.publishingFile')} />
                       ) : null}

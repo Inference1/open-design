@@ -4196,6 +4196,7 @@ export interface Dict {
   'fileViewer.publishingFile': string;
   'fileViewer.uploadingFile': string;
   'fileViewer.publishingContinuesOnClose': string;
+  'fileViewer.publishMakesProjectTeamVisible': string;
   'fileViewer.unpublishFile': string;
   /** @deprecated Orphaned (recvqgif6Xa7Wb): rendered the "no team to share
    *  with yet" bridge card with its create-team CTA in the share panel.

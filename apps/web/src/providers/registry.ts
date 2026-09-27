@@ -158,6 +158,8 @@ export type WebCloudflarePagesZonesResponse = CloudflarePagesZonesResponse;
 export interface WebPublicFileShareLink {
   slug: string;
   url: string | null;
+  /** Publish only: this publish made a private team-workspace project team-visible. */
+  madeTeamVisible?: true;
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -169,10 +171,11 @@ function publicFileShareLinkFromPublish(payload: unknown): WebPublicFileShareLin
   const body = (payload && typeof payload === 'object' ? payload : {}) as {
     receipt?: { slug?: unknown };
     url?: unknown;
+    madeTeamVisible?: unknown;
   };
   const slug = nonEmptyString(body.receipt?.slug);
   if (!slug) throw new Error('Publish response is missing its receipt slug');
-  return { slug, url: nonEmptyString(body.url) };
+  return { slug, url: nonEmptyString(body.url), ...(body.madeTeamVisible === true ? { madeTeamVisible: true as const } : {}) };
 }
 
 /** Normalize the GET publish-public body (`ProjectFilePublicShareResponse`). */

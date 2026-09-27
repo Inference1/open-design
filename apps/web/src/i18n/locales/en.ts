@@ -3298,6 +3298,7 @@ export const en: Dict = {
   'fileViewer.publishingFile': 'Creating link…',
   "fileViewer.uploadingFile": "Uploading",
   "fileViewer.publishingContinuesOnClose": "Closing this panel will not interrupt the upload.",
+  "fileViewer.publishMakesProjectTeamVisible": "After publishing, team members will be able to see this project.",
   'fileViewer.unpublishFile': 'Stop sharing',
   'fileViewer.shareEmptyStateTitle': 'Nothing to share yet',
   'fileViewer.shareEmptyStateDescription': 'Create or join a team to share this file with teammates',

@@ -3284,6 +3284,7 @@ export const fa: Dict = {
   'fileViewer.publishingFile': 'در حال ایجاد پیوند…',
   "fileViewer.uploadingFile": "در حال بارگذاری",
   "fileViewer.publishingContinuesOnClose": "بستن این پنل، بارگذاری را متوقف نمی‌کند.",
+  "fileViewer.publishMakesProjectTeamVisible": "پس از انتشار، اعضای تیم می‌توانند این پروژه را ببینند.",
   'fileViewer.unpublishFile': 'توقف اشتراک‌گذاری',
   'fileViewer.shareEmptyStateTitle': 'چیزی برای اشتراک‌گذاری وجود ندارد',
   'fileViewer.shareEmptyStateDescription': 'برای اشتراک‌گذاری این فایل با همکاران، یک تیم بسازید یا به تیمی بپیوندید',

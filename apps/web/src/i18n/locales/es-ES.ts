@@ -3284,6 +3284,7 @@ export const esES: Dict = {
   'fileViewer.publishingFile': 'Creando enlace…',
   "fileViewer.uploadingFile": "Subiendo",
   "fileViewer.publishingContinuesOnClose": "Cerrar este panel no interrumpirá la carga.",
+  "fileViewer.publishMakesProjectTeamVisible": "Después de publicar, los miembros del equipo podrán ver este proyecto.",
   'fileViewer.unpublishFile': 'Dejar de compartir',
   'fileViewer.shareEmptyStateTitle': 'Nada que compartir todavía',
   'fileViewer.shareEmptyStateDescription': 'Crea o únete a un equipo para compartir este archivo con tus compañeros',

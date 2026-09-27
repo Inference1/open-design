@@ -6844,6 +6844,8 @@ function ReactComponentViewer({
         result: 'success',
         publish_duration_ms: Math.round(performance.now() - publishStarted),
       }, publishRequestId);
+      // Project-wide, so announce it even if the viewer moved on meanwhile.
+      if (response.madeTeamVisible) notifyTeamProjectsChanged({ projectId: requestProjectId, kind: 'catalog' });
       const current = publicFileIdentityRef.current;
       if (
         publicFileRequestSeqRef.current !== requestSeq ||
@@ -6854,8 +6856,14 @@ function ReactComponentViewer({
       }
       setPublishedFileUrl(response.url ?? '');
       setPublishedFileSlug(response.slug);
+      if (response.madeTeamVisible) setShareAccess('workspace');
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
+      // A failed publish may still have registered a private team-workspace
+      // project in the team catalog; re-read visibility instead of assuming.
+      if (workspaceContext?.workspaceType === 'team' && shareAccess === 'private') {
+        notifyTeamProjectsChanged({ projectId: requestProjectId, kind: 'catalog' });
+      }
       const recoveryPublication = publicFileManualRevokePublication(error);
       firePublishResult({
         action: 'publish',
@@ -7265,6 +7273,14 @@ function ReactComponentViewer({
                             </div>
                           </div>
                         ) : (
+                          <>
+                          {workspaceContext?.workspaceType === 'team' && shareAccess === 'private'
+                            && !viewerOnly && !publishingPublicFile ? (
+                            // Decision 67 #11, same notice as ShareTab.
+                            <div className="share-menu-section-label" role="note">
+                              {t('fileViewer.publishMakesProjectTeamVisible')}
+                            </div>
+                          ) : null}
                           <button
                             type="button"
                             className="share-menu-item"
@@ -7285,6 +7301,7 @@ function ReactComponentViewer({
                             </span>
                             <span>{publishingPublicFile ? t('fileViewer.publishingFile') : t('fileViewer.publishSingleFileTitle')}</span>
                           </button>
+                          </>
                         ) }
                         {publishFailureKey ? (
                           <p className="chrome-publish-error" role="status">
@@ -8362,6 +8379,8 @@ function HtmlViewer({
         result: 'success',
         publish_duration_ms: Math.round(performance.now() - publishStarted),
       }, publishRequestId);
+      // Project-wide, so announce it even if the viewer moved on meanwhile.
+      if (response.madeTeamVisible) notifyTeamProjectsChanged({ projectId: requestProjectId, kind: 'catalog' });
       const current = publicFileIdentityRef.current;
       if (
         publicFileRequestSeqRef.current !== requestSeq ||
@@ -8372,6 +8391,7 @@ function HtmlViewer({
       }
       setPublishedFileUrl(response.url ?? '');
       setPublishedFileSlug(response.slug);
+      if (response.madeTeamVisible) setShareAccess('workspace');
       clearPublicFileProgressTimers();
       setPublishProgress(boundedPublishProgress(0, true));
       // Keep success observable without delaying the link or S3's clipboard window.
@@ -8386,6 +8406,11 @@ function HtmlViewer({
       if (response.url) void copyPublicFileUrl(response.url);
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
+      // A failed publish may still have registered a private team-workspace
+      // project in the team catalog; re-read visibility instead of assuming.
+      if (workspaceContext?.workspaceType === 'team' && shareAccess === 'private') {
+        notifyTeamProjectsChanged({ projectId: requestProjectId, kind: 'catalog' });
+      }
       const recoveryPublication = publicFileManualRevokePublication(error);
       firePublishResult({
         action: 'publish',

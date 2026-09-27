@@ -3276,6 +3276,7 @@ export const id: Dict = {
   'fileViewer.publishingFile': 'Membuat tautan…',
   "fileViewer.uploadingFile": "Mengunggah",
   "fileViewer.publishingContinuesOnClose": "Menutup panel ini tidak akan mengganggu unggahan.",
+  "fileViewer.publishMakesProjectTeamVisible": "Setelah dipublikasikan, anggota tim akan dapat melihat proyek ini.",
   'fileViewer.unpublishFile': 'Hentikan berbagi',
   'fileViewer.shareEmptyStateTitle': 'Belum ada yang bisa dibagikan',
   'fileViewer.shareEmptyStateDescription': 'Buat atau gabung ke tim untuk membagikan file ini ke rekan tim',

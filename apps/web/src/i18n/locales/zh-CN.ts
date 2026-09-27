@@ -3448,6 +3448,7 @@ export const zhCN: Dict = {
   "fileViewer.publishingFile": "生成中…",
   "fileViewer.uploadingFile": "上传中",
   "fileViewer.publishingContinuesOnClose": "关闭面板不会中断上传。",
+  "fileViewer.publishMakesProjectTeamVisible": "发布后团队成员可见。",
   "fileViewer.unpublishFile": "停止分享",
   "fileViewer.shareEmptyStateTitle": "暂时无法分享",
   "fileViewer.shareEmptyStateDescription": "创建或加入一个团队,就能把这个文件分享给同事",

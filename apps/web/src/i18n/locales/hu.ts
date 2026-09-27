@@ -3276,6 +3276,7 @@ export const hu: Dict = {
   'fileViewer.publishingFile': 'Link létrehozása…',
   "fileViewer.uploadingFile": "Feltöltés folyamatban",
   "fileViewer.publishingContinuesOnClose": "A panel bezárása nem szakítja meg a feltöltést.",
+  "fileViewer.publishMakesProjectTeamVisible": "Közzététel után a csapattagok is látni fogják ezt a projektet.",
   'fileViewer.unpublishFile': 'Megosztás leállítása',
   'fileViewer.shareEmptyStateTitle': 'Még nincs mit megosztani',
   'fileViewer.shareEmptyStateDescription': 'Hozz létre egy csapatot, vagy csatlakozz egyhez, hogy megoszthasd ezt a fájlt a kollégáiddal',
