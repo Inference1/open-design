@@ -241,8 +241,11 @@ export interface RegisterCollabSyncRoutesDeps {
   readProjectShareState?: ReadProjectShareState;
   /** Durable local author proof for a not-yet-catalogued project. Never inferred from the requester. */
   resolveLocalPublicShareOwner?: (projectId: string, workspaceId: string) => string | null;
+  /** The creator's own active private row in this team workspace. Read before
+   * catalog registration, after which a concurrent reconcile may rebind it. */
+  isPrivateTeamProjectOfCreator?: (projectId: string, principal: ResourceHubPrincipal) => boolean;
   /** Record a creator's private project as team-visible once publishing has
-   * registered it in a team catalog. True only when this call changed it. */
+   * registered it in a team catalog. True when the row is the creator's team row afterwards. */
   markPublishedTeamProjectVisible?: (projectId: string, principal: ResourceHubPrincipal) => boolean;
   /** The only source of a publication's Viewer address on read; `null` when
    * no Viewer origin is configured. Unwired means unavailable, never the stored URL. */
@@ -1353,6 +1356,11 @@ export function registerCollabSyncRoutes(
       });
     }
 
+    // Before registration: once the project is in the team catalog, a catalog
+    // reconcile (hub event, project list read) may mark the row team-visible
+    // ahead of this request, and the publish must still report that it did.
+    const wasPrivateTeamProject = verifiedContext.workspaceType === 'team'
+      && deps.isPrivateTeamProjectOfCreator?.(projectId, principal) === true;
     if (needsCatalog) {
       try {
         if (!publisher.ensureProject) throw new Error('project bootstrap unavailable');
@@ -1369,8 +1377,9 @@ export function registerCollabSyncRoutes(
     // comment backfill or accept a new comment for it; waiting for the
     // background reconcile left both stranded as creator-only relay in a team
     // workspace, which is not relayable and was cancelled for good.
-    const madeTeamVisible = verifiedContext.workspaceType === 'team'
+    const teamVisible = verifiedContext.workspaceType === 'team'
       && deps.markPublishedTeamProjectVisible?.(projectId, principal) === true;
+    const madeTeamVisible = wasPrivateTeamProject && teamVisible;
     if (madeTeamVisible) invalidateTeamProjectCatalog?.();
     // Carried on failures too: the visibility change stands even if the upload
     // below fails, and a retry would no longer report it.

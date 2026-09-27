@@ -967,7 +967,7 @@ import { createPublicFileStopStartup, createSqlitePublicFilePublicationStore } f
 import { sourcePathForCurrentPublication } from './collab/comment-relay-publication-mapping.js';
 import { createPublicFilePublicationRecorder } from './collab/public-file-publication-recording.js';
 import { enqueuePublishedFileComments } from './collab/published-file-comment-backfill.js';
-import { markPublishedTeamProjectVisible } from './collab/public-share-team-visibility.js';
+import { isPrivateTeamProjectOfCreator, markPublishedTeamProjectVisible } from './collab/public-share-team-visibility.js';
 import { createVelaPublicFileStop } from './collab/vela-public-file-stop.js';
 import { createShareContentFingerprints } from './collab/share-content-fingerprint.js';
 import { createShareBindingOutbox } from './collab/share-binding-outbox.js';
@@ -5349,6 +5349,7 @@ export async function startServer({
     // publication cannot enqueue work that later resolves against nothing.
     recordPublicFilePublication,
     resolveLocalPublicShareOwner: resolveLocalProjectOwner,
+    isPrivateTeamProjectOfCreator: (projectId, principal) => isPrivateTeamProjectOfCreator(db, projectId, principal),
     markPublishedTeamProjectVisible: (projectId, principal) => markPublishedTeamProjectVisible(db, projectId, principal),
     resolvePublicShareLink: (projectId, slug) => resolvePublicShareViewerUrl(projectId, slug, process.env, configuredAmrEnv()),
     sharePublishing: {

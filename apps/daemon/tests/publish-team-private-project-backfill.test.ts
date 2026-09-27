@@ -19,7 +19,7 @@ import { createCommentRelayOutboxStore, commentRelayLocalBindingMatches } from '
 import { createCollabCloudService } from '../src/collab/collab-cloud-service.js';
 import { createVelaCliCollabClient } from '../src/collab/vela-cli-collab-client.js';
 import { commentRelayScope } from '../src/collab/comment-relay-scope.js';
-import { markPublishedTeamProjectVisible } from '../src/collab/public-share-team-visibility.js';
+import { isPrivateTeamProjectOfCreator, markPublishedTeamProjectVisible } from '../src/collab/public-share-team-visibility.js';
 import { runVelaResourceCommand } from '../src/collab/vela-cli-resource-adapter.js';
 import { readVelaControlApiContext } from '../src/integrations/vela.js';
 import { createPublicSharePublishingFixture } from './public-share-publishing-fixture.js';
@@ -79,6 +79,7 @@ it('publishing a private team-workspace project makes it team-visible before bac
       // Private project: not in the team catalog until this publish registers it.
       resolveSharedProject: async () => null, resolveSharedProjectOwner: async () => null,
       resolveLocalPublicShareOwner: () => 'owner',
+      isPrivateTeamProjectOfCreator: (projectId, principal) => isPrivateTeamProjectOfCreator(db, projectId, principal),
       markPublishedTeamProjectVisible: (projectId, principal) => markPublishedTeamProjectVisible(db, projectId, principal),
       resolveProjectDir: () => root,
     });
@@ -257,4 +258,77 @@ it('only the same creator in the same workspace is re-queued as Team relay', () 
   expect(commentRelayRecordPromotedToTeam(record, { ...team, createdByWorkspaceMemberId: 'someone-else' })).toBe(false);
   expect(commentRelayRecordPromotedToTeam(record, { ...team, resourceState: 'deleted' })).toBe(false);
   expect(commentRelayRecordPromotedToTeam({ ...record, relayScope: 'team' }, team)).toBe(false);
+});
+
+// Integration rerun (share P0, 2026-09-27): registering the project in the team
+// catalog lets a concurrent catalog reconcile (hub `team-projects-changed`, a
+// project list read) rebind the row to team before publish-public marks it.
+// The publish still made the project team-visible, so it must say so; otherwise
+// the UI keeps showing "only me" and the CLI never prints its notice.
+async function publishWithCatalogRace(initialVisibility: 'personal' | 'team') {
+  const root = await mkdtemp(join(tmpdir(), 'od-publish-team-race-'));
+  const db = openDatabase(root);
+  const context: WorkspaceCollabContext = {
+    workspaceId: 'w', teamId: 'w', workspaceMemberId: 'owner', workspaceType: 'team', role: 'owner',
+    memberStatus: 'active', lifecycleState: 'active', billingState: 'active', planId: null, providerMode: 'platform_credits',
+    seatSummary: buildWorkspaceSeatSummary({ seatLimit: 3, usedSeats: 2 }),
+    permissions: buildWorkspacePermissions({ role: 'owner', lifecycleState: 'active' }),
+  };
+  const runtime = createCollabRuntime({ workspaceContext: { current: async () => context } });
+  const app = express(); app.use(express.json());
+  const server = createServer(app);
+  try {
+    await mkdir(join(root, 'pages'));
+    await writeFile(join(root, 'pages', 'local.html'), '<h1 data-od-id="hero">Published</h1>');
+    insertProject(db, { id: 'p', name: 'Project', createdAt: 1, updatedAt: 1 });
+    insertConversation(db, { id: 'a', projectId: 'p', title: 'a', createdAt: 1, updatedAt: 1 });
+    db.prepare(`INSERT INTO workspace_projects(project_id,workspace_id,visibility,resource_state,created_by_workspace_member_id,created_at,updated_at)
+      VALUES('p','w',?,'active','owner',1,1)`).run(initialVisibility);
+    migratePublicFilePublications(db);
+    const store = createSqlitePublicFilePublicationStore(db);
+    vi.mocked(readVelaControlApiContext).mockReturnValue({ profile: 'test', apiUrl: 'https://hub.example.test', controlKey: 'synthetic', user: null, configMtimeMs: null });
+    vi.mocked(runVelaResourceCommand).mockReset();
+    vi.mocked(runVelaResourceCommand).mockImplementation(async () => JSON.stringify({ id: 'v1', version: 1 }));
+    const fixture = createPublicSharePublishingFixture(db, store, runVelaResourceCommand, enqueuePublishedFileComments);
+    registerCollabSyncRoutes(app, {
+      collab: runtime, publicFilePublicationStore: store, ...fixture,
+      sharePublishing: {
+        ...fixture.sharePublishing!,
+        ensureProject: async (scope, principal) => {
+          // The catalog reconcile wins the race and binds the row to team first.
+          db.prepare(`UPDATE workspace_projects SET visibility='team', sync_state='synced' WHERE project_id='p'`).run();
+          return { projectId: scope.projectId, ownerMemberId: principal.memberId, sharedAt: new Date(1).toISOString() };
+        },
+      },
+      recordPublicFilePublication: createPublicFilePublicationRecorder(db, store, enqueuePublishedFileComments),
+      verifyWorkspaceRequest: async req => req.get('x-od-workspace-id') === 'w' ? context : null,
+      resolveSharedProject: async () => null, resolveSharedProjectOwner: async () => null,
+      resolveLocalPublicShareOwner: () => 'owner',
+      isPrivateTeamProjectOfCreator: (projectId, principal) => isPrivateTeamProjectOfCreator(db, projectId, principal),
+      markPublishedTeamProjectVisible: (projectId, principal) => markPublishedTeamProjectVisible(db, projectId, principal),
+      resolveProjectDir: () => root,
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('HTTP listener unavailable');
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/projects/p/files/${FILE}/publish-public`, {
+      method: 'POST', headers: { 'x-od-workspace-id': 'w', 'x-od-workspace-member-id': 'owner' },
+    });
+    return { status: response.status, body: await response.json() as Record<string, unknown> };
+  } finally {
+    if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    runtime.dispose(); closeDatabase(); await rm(root, { recursive: true, force: true }); vi.clearAllMocks();
+  }
+}
+
+it('reports madeTeamVisible when a catalog reconcile marked the private project team-visible first', async () => {
+  const { status, body } = await publishWithCatalogRace('personal');
+  expect(status).toBe(200);
+  expect(body).toMatchObject({ status: 'published', madeTeamVisible: true });
+});
+
+it('does not report madeTeamVisible for a project that was already team-visible before publishing', async () => {
+  const { status, body } = await publishWithCatalogRace('team');
+  expect(status).toBe(200);
+  expect(body.madeTeamVisible).toBeUndefined();
 });
