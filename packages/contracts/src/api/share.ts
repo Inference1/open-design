@@ -1673,11 +1673,22 @@ export interface ShareUnpublishResponse {
   fileName: string;
 }
 
-export type SharePublishResponse =
+export type SharePublishResponse = (
   | ({ status: 'published'; receipt: SharePublishReceipt; link?: never } & SharePublishedLink)
   | { status: 'published'; receipt: SharePublishReceipt; url?: never; link: SharePublishLinkUnavailable }
   | ({ status: 'binding_pending'; receipt: SharePublishReceipt; binding: SharePublishBindingPending }
-      & ({ url: string; link?: never } | { url?: never; link?: SharePublishLinkUnavailable }));
+      & ({ url: string; link?: never } | { url?: never; link?: SharePublishLinkUnavailable }))
+) & SharePublishTeamVisibility;
+
+/**
+ * Present only when THIS publish turned a private project in a team workspace
+ * into a team-visible one (decision 67 #11): a public link registers the
+ * project in the team catalog, so every team member can now see it. The UI
+ * says so before the first publish; the CLI prints the same notice after.
+ */
+export interface SharePublishTeamVisibility {
+  madeTeamVisible?: true;
+}
 
 /**
  * Has this project ever been shared — as opposed to being shared right now?

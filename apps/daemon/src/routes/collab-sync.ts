@@ -241,6 +241,9 @@ export interface RegisterCollabSyncRoutesDeps {
   readProjectShareState?: ReadProjectShareState;
   /** Durable local author proof for a not-yet-catalogued project. Never inferred from the requester. */
   resolveLocalPublicShareOwner?: (projectId: string, workspaceId: string) => string | null;
+  /** Record a creator's private project as team-visible once publishing has
+   * registered it in a team catalog. True only when this call changed it. */
+  markPublishedTeamProjectVisible?: (projectId: string, principal: ResourceHubPrincipal) => boolean;
   /** The only source of a publication's Viewer address on read; `null` when
    * no Viewer origin is configured. Unwired means unavailable, never the stored URL. */
   resolvePublicShareLink?: (projectId: string, slug: string) => string | null;
@@ -1361,6 +1364,18 @@ export function registerCollabSyncRoutes(
         return res.status(403).json({ error: 'WORKSPACE_PROJECT_PUBLISH_DENIED' });
       }
     }
+    // Decision 67 #11: the project is now in the team catalog, so it is
+    // team-visible. Say so locally before anything below can enqueue the
+    // comment backfill or accept a new comment for it; waiting for the
+    // background reconcile left both stranded as creator-only relay in a team
+    // workspace, which is not relayable and was cancelled for good.
+    const madeTeamVisible = verifiedContext.workspaceType === 'team'
+      && deps.markPublishedTeamProjectVisible?.(projectId, principal) === true;
+    if (madeTeamVisible) invalidateTeamProjectCatalog?.();
+    // Carried on failures too: the visibility change stands even if the upload
+    // below fails, and a retry would no longer report it.
+    const withVisibility = <T extends object>(body: T): T | (T & { madeTeamVisible: true }) =>
+      madeTeamVisible ? { ...body, madeTeamVisible: true } : body;
     // Absence must be observed remotely, not inferred from a lost local row.
     // Unknown or pre-existing aliases must never be auto-stopped on a local failure.
     const previousState = await deps.readProjectShareState?.(scope).catch(() => null);
@@ -1368,7 +1383,7 @@ export function registerCollabSyncRoutes(
       ? previousState.publications.find(item => item.sourceFilePath === filePath && item.status === 'stopped')?.slug
       : undefined;
     const resumed = await resumePendingShareBinding(scope, publicFilePublicationStore, publisher.outbox, prepared.run, stoppedSlug);
-    if (resumed) return res.json(sharePublishResponse(resumed, prepared.url));
+    if (resumed) return res.json(withVisibility(sharePublishResponse(resumed, prepared.url)));
     const resourceId = publicFileResourceIdFor(scope);
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'od-public-file-'));
     let stage: 'push' | 'snapshot' | 'persist' = 'push';
@@ -1419,14 +1434,14 @@ export function registerCollabSyncRoutes(
             logPublicFileFailure({
               action: 'publish', errorCode: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE', failure, requestId, startedAt,
             });
-            return res.status(502).json({ error: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE', failure });
+            return res.status(502).json(withVisibility({ error: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE', failure }));
           } catch { /* Remote publication may still be accessible: never hide it. */ }
         }
-        return res.status(502).json({ error: {
+        return res.status(502).json(withVisibility({ error: {
           code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
           message: `Publication metadata could not be saved; the public share may remain accessible${prepared.url ? ` at ${prepared.url}` : ''}. Use od project share stop to revoke it explicitly.`,
           data: { ...publication, projectId, receipt: result.receipt },
-        } });
+        } }));
       }
       // Register/bind must never revive a stopped link. This foreground owner
       // request alone carries explicit resume intent for the observed alias.
@@ -1451,7 +1466,7 @@ export function registerCollabSyncRoutes(
           console.warn('[od] public file content fingerprint unavailable');
         }
       }
-      return res.json(response);
+      return res.json(withVisibility(response));
     } catch (error) {
       console.warn('[od] failed to publish public project file:', error);
       const failure = stage === 'persist'
@@ -1460,7 +1475,7 @@ export function registerCollabSyncRoutes(
       logPublicFileFailure({
         action: 'publish', errorCode: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE', failure, requestId, startedAt,
       });
-      return res.status(502).json({ error: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE', failure });
+      return res.status(502).json(withVisibility({ error: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE', failure }));
     } finally {
       await rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }

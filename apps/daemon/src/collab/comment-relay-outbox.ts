@@ -54,6 +54,12 @@ export interface CommentRelayOutboxStore {
     nextAttemptAt: number;
     error: string;
   }): boolean;
+  /**
+   * Re-queue this exact personal revision as Team relay, keeping its payload
+   * and publication witness. Only for a project whose creator's row became
+   * team-visible (see {@link commentRelayRecordPromotedToTeam}).
+   */
+  rescopeToTeam?(record: CommentRelayOutboxRecord): boolean;
   count(): number;
 }
 
@@ -107,6 +113,27 @@ export function commentRelayLocalBindingMatches(
   ) return false;
   const currentOwnerMemberId = binding.createdByWorkspaceMemberId?.trim() || null;
   return currentOwnerMemberId === record.expectedOwnerMemberId;
+}
+
+/**
+ * A personal record whose project has since become team-visible for the SAME
+ * creator in the SAME workspace (decision 67 #11: publishing a private project
+ * in a team workspace makes it team-visible). That is not an unshare, delete,
+ * or re-home, so the queued comment is still meant for this project's readers;
+ * it only needs the Team relay path now. Anything else stays a cancellation.
+ */
+export function commentRelayRecordPromotedToTeam(
+  record: CommentRelayOutboxRecord,
+  binding: CommentRelayLocalProjectBinding | null | undefined,
+): boolean {
+  return record.relayScope === 'personal'
+    && record.teamId === record.workspaceId
+    && binding?.workspaceId?.trim() === record.workspaceId
+    && binding.visibility === 'team'
+    && binding.resourceState !== 'deleted'
+    && record.expectedOwnerMemberId !== null
+    && (binding.createdByWorkspaceMemberId?.trim() || null) === record.expectedOwnerMemberId
+    && record.workspaceMemberId === record.expectedOwnerMemberId;
 }
 
 export function migrateCommentRelayOutbox(db: SqliteDb): void {
@@ -268,6 +295,21 @@ export function createCommentRelayOutboxStore(
        AND comment_id = ?
        AND revision = ?
   `);
+  const rescopeRow = db.prepare(`
+    UPDATE comment_relay_outbox
+       SET relay_scope = 'team',
+           revision = revision + 1,
+           attempt_count = 0,
+           next_attempt_at = ?,
+           last_error = NULL,
+           updated_at = ?
+     WHERE workspace_id = ?
+       AND workspace_member_id = ?
+       AND project_id = ?
+       AND comment_id = ?
+       AND revision = ?
+       AND relay_scope = 'personal'
+  `);
   const countRows = db.prepare(`SELECT COUNT(*) AS count FROM comment_relay_outbox`);
 
   return {
@@ -340,6 +382,21 @@ export function createCommentRelayOutboxStore(
           DO UPDATE SET failed_at=excluded.failed_at`).run(record.workspaceId, record.workspaceMemberId, record.projectId, now());
         return changed;
       })();
+    },
+    rescopeToTeam(record) {
+      const timestamp = now();
+      // Revision-conditional like acknowledge/defer: a newer local edit that
+      // raced this drain keeps its own row. Not an outcome: a backfill batch
+      // stays pending until the Team delivery acknowledges it.
+      return rescopeRow.run(
+        timestamp,
+        timestamp,
+        record.workspaceId,
+        record.workspaceMemberId,
+        record.projectId,
+        record.commentId,
+        record.revision,
+      ).changes > 0;
     },
     count() {
       return Number((countRows.get() as { count?: unknown } | undefined)?.count ?? 0);

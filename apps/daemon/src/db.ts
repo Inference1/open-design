@@ -4010,14 +4010,63 @@ export function confirmPreviewCommentPinSeq(
   seq: number,
 ): boolean {
   if (!Number.isFinite(seq)) return false;
-  const result = db
+  return db.transaction(() => {
+    const row = db
+      .prepare(
+        `SELECT file_path AS filePath FROM preview_comments
+          WHERE id = ? AND project_id = ? AND pin_seq_confirmed = 0`,
+      )
+      .get(id, projectId) as { filePath?: unknown } | undefined;
+    if (!row || typeof row.filePath !== 'string') return false;
+    const pinSeq = distinctConfirmedPinSeq(db, projectId, row.filePath, id, Math.round(seq));
+    return db
+      .prepare(
+        `UPDATE preview_comments
+            SET pin_seq = ?, pin_seq_confirmed = 1
+          WHERE id = ? AND project_id = ? AND pin_seq_confirmed = 0`,
+      )
+      .run(pinSeq, id, projectId).changes > 0;
+  })();
+}
+
+function nextPinSeq(db: SqliteDb, projectId: string, filePath: string, excludeId: string): number {
+  const pinScope = db
     .prepare(
-      `UPDATE preview_comments
-          SET pin_seq = ?, pin_seq_confirmed = 1
-        WHERE id = ? AND project_id = ? AND pin_seq_confirmed = 0`,
+      `SELECT COALESCE(MAX(pin_seq), 0) AS maxPinSeq
+         FROM preview_comments
+        WHERE project_id = ? AND file_path = ? AND id <> ?`,
     )
-    .run(Math.round(seq), id, projectId);
-  return result.changes > 0;
+    .get(projectId, filePath, excludeId) as DbRow;
+  return Number(pinScope?.maxPinSeq ?? 0) + 1;
+}
+
+/**
+ * Invariant: no two SETTLED pins of one file share a number. The cloud `seq`
+ * is the preferred number, but it can only be adopted when no other confirmed
+ * row of the file already holds it. Confirmed rows the cloud never numbered —
+ * comments written while a project was private and relayed later by the
+ * publish backfill, or never relayed at all — keep their local numbers, and a
+ * cloud seq landing on one of them would show two pins labelled the same
+ * (share P0 integration: two "1."). In that case take the next free number.
+ * Provisional (unconfirmed) rows are not blockers: they move to their own
+ * cloud seq when their push resolves, which is how two devices converge.
+ */
+function distinctConfirmedPinSeq(
+  db: SqliteDb,
+  projectId: string,
+  filePath: string,
+  id: string,
+  preferred: number,
+): number {
+  const taken = db
+    .prepare(
+      `SELECT 1 FROM preview_comments
+        WHERE project_id = ? AND file_path = ? AND id <> ?
+          AND pin_seq = ? AND pin_seq_confirmed = 1
+        LIMIT 1`,
+    )
+    .get(projectId, filePath, id, preferred);
+  return taken ? nextPinSeq(db, projectId, filePath, id) : preferred;
 }
 
 /**
@@ -4520,17 +4569,9 @@ export function mergeSyncedPreviewComment(
   // gets a usable number instead of a permanent NULL.
   const createdAt = Number.isFinite(comment.createdAt) ? comment.createdAt : now;
   const hasWireSeq = Number.isFinite(comment.seq) && comment.seq > 0;
-  let pinSeq = hasWireSeq ? Math.round(comment.seq) : null;
-  if (!hasWireSeq) {
-    const pinScope = db
-      .prepare(
-        `SELECT COALESCE(MAX(pin_seq), 0) AS maxPinSeq
-           FROM preview_comments
-          WHERE project_id = ? AND file_path = ?`,
-      )
-      .get(projectId, comment.filePath) as DbRow;
-    pinSeq = Number(pinScope?.maxPinSeq ?? 0) + 1;
-  }
+  const pinSeq = hasWireSeq
+    ? distinctConfirmedPinSeq(db, projectId, comment.filePath, comment.id, Math.round(comment.seq))
+    : nextPinSeq(db, projectId, comment.filePath, comment.id);
   const result = db
     .prepare(
       `INSERT INTO preview_comments

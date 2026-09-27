@@ -62,6 +62,12 @@ export interface CollabCloudServiceDeps {
   ) => Promise<WorkspaceCollabContext | null>;
   /** Cheap local binding witness applied per queued record in a batch. */
   validateCommentRelayProjectBinding?: (record: CommentRelayOutboxRecord) => boolean;
+  /**
+   * True when a personal record failed that witness only because its creator's
+   * project became team-visible (a public link in a team workspace). Such a
+   * record is re-queued as Team relay instead of being cancelled.
+   */
+  isCommentRelayRecordPromotedToTeam?: (record: CommentRelayOutboxRecord) => boolean;
   /** Separate creator-scoped eligibility for active public personal projects. */
   commentRelayScope?: (
     projectId: string,
@@ -207,6 +213,8 @@ const DEFAULT_POLL_INTERVAL_MS = 5_000;
 const MAX_MEMBER_PAGES_PER_DRAIN = 200;
 const COMMENT_OUTBOX_PUSH_CONCURRENCY = 4;
 
+/** ~10 min of relay backoff: far longer than the background catalog reconcile. */
+const AWAIT_TEAM_VISIBILITY_MAX_ATTEMPTS = 24;
 const MEMBER_PAGE_RETRY_BASE_MS = 10_000;
 const MEMBER_PAGE_RETRY_MAX_MS = 5 * 60_000;
 
@@ -722,7 +730,14 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       eligible = [];
       for (const record of records) {
         if (deps.validateCommentRelayProjectBinding(record)) eligible.push(record);
-        else {
+        else if (
+          deps.isCommentRelayRecordPromotedToTeam?.(record)
+          && deps.commentOutbox?.rescopeToTeam?.(record)
+        ) {
+          // Same comment, same readers, new relay path: deliver it in this
+          // drain's follow-up pass rather than dropping it.
+          outboxRerunRequested = true;
+        } else {
           // A local unshare/delete/re-home is authoritative and cannot become
           // valid again for this queued revision. Cancel it even if the remote
           // catalog still carries a briefly-stale row.
@@ -763,7 +778,21 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       const deliverable: CommentRelayOutboxRecord[] = [];
       for (const record of eligible) {
         if (relayIdentityMatches(context, record)) deliverable.push(record);
-        else {
+        else if (
+          context.workspaceType === 'team'
+          && record.attemptCount < AWAIT_TEAM_VISIBILITY_MAX_ATTEMPTS
+          && deps.commentOutbox?.isPublicationCurrent?.(record) === true
+        ) {
+          // The binding witness above still holds and the exact publication is
+          // still current: this is a creator's private project in a team
+          // workspace that has not been marked team-visible yet. That is a
+          // transient state (publishing registered it in the team catalog),
+          // not a stop, so retry with backoff; once the row turns `team` the
+          // record is re-queued as Team relay, and a stop cancels it. Bounded:
+          // a row the catalog reconcile never promotes (demoted, moved back to
+          // private) is cancelled as before instead of retrying forever.
+          deferOutboxRecord(record, new Error('comment relay awaiting team visibility'));
+        } else {
           // Fresh workspace authority is already proven for this identity
           // batch. A failed exact-file scope check therefore means the local
           // durable publication witness was removed (or its creator binding
