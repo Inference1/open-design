@@ -18,18 +18,19 @@ const props = (overrides: Partial<Props> = {}): Props => ({
 });
 describe('canonical Viewer link consumption', () => {
   it('does not expose stale console URL copy controls for a durable publication with unavailable link', () => {
-    const input = props(); render(<ShareTab {...input} />);
+    // Stopping needs a signed-in workspace (a retained link alone is read-only).
+    const input = props({ workspaceContext: { workspaceId: 'w', workspaceType: 'personal' } as Props['workspaceContext'] });
+    render(<ShareTab {...input} />);
     expect(screen.getByRole('status')).toHaveTextContent('fileViewer.publicLinkUnavailable');
     expect(screen.queryByText(input.publishedFileUrl)).toBeNull();
     expect(screen.queryByRole('button', { name: 'fileViewer.copyShareLink' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'fileViewer.generateAndCopyLink' })).toBeNull();
     // The Link access switch stays ON: toggling it stops the live publication
-    // instead of publishing (uploading) again. Stop sharing does the same.
+    // instead of publishing (uploading) again.
     const toggle = screen.getByRole('switch', { name: 'fileViewer.linkAccessTitle' });
     expect(toggle).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(toggle);
-    fireEvent.click(screen.getByRole('button', { name: 'fileViewer.unpublishFile' }));
-    expect(input.unpublishCurrentFilePublic).toHaveBeenCalledTimes(2);
+    expect(input.unpublishCurrentFilePublic).toHaveBeenCalledTimes(1);
     expect(input.publishCurrentFilePublic).not.toHaveBeenCalled();
   });
   it('keeps the healthy canonical Viewer link available for display and copy', () => {

@@ -16,6 +16,7 @@ import { migrateCommentRelayOutbox } from '../src/collab/comment-relay-outbox.js
 import { createShareBindingOutbox } from '../src/collab/share-binding-outbox.js';
 import { createShareBindingStartup } from '../src/collab/share-binding-startup.js';
 import { createPublicFileMutations } from '../src/collab/public-file-mutations.js';
+import { publicFileResourceIdFor } from '../src/collab/public-file-resource-id.js';
 import { parseAmrShareLink, resolvePublicShareLink, verifiedAmrShareViewerUrl } from '../src/collab/public-share-viewer-url.js';
 import { parseProjectShareState } from '../src/collab/vela-project-share-state.js';
 import { bindVelaShareVersion } from '../src/collab/vela-share-binding.js';
@@ -207,6 +208,16 @@ async function startShareDaemon(options: { env?: NodeJS.ProcessEnv; amr?: Fixtur
   return { db, store, state, base, fixture, publish: () => json({ method: 'POST' }), read: () => json() };
 }
 
+/** Publish is atomic now (a CLI answering binding_pending is refused), so a
+ * pending binding is one left by an earlier two-step publish: a publication row
+ * without a link plus its queued binding. */
+function seedPendingBinding(daemon: Awaited<ReturnType<typeof startShareDaemon>>) {
+  const receipt = { filePath: scope.filePath, slug, version: 1, versionId: 'version-1', publishedAt: 1, entryPath: 'index.html' };
+  daemon.store.set(scope, { url: null, slug, fileName: scope.filePath });
+  createShareBindingOutbox(daemon.db).enqueue({ ...scope, resourceId: publicFileResourceIdFor(scope),
+    publicationRevision: daemon.store.getRevision(scope)!.token, receipt });
+}
+
 describe('publish-public takes its link from AMR', () => {
   it('publish shows and persists the AMR url; GET returns it', async () => {
     const daemon = await startShareDaemon({ amr: amrReportsUrl });
@@ -297,10 +308,9 @@ describe('publish-public takes its link from AMR', () => {
     expect(daemon.store.get(scope)?.url).toBeNull();
   });
 
-  it('a pending publish gets its link from the bind that completes it, in the foreground and in the background', async () => {
-    const daemon = await startShareDaemon({ amr: amrReportsUrl, pending: true });
-    const pending = await daemon.publish();
-    expect(pending.body).toMatchObject({ status: 'binding_pending', link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' } });
+  it('a pending binding gets its link from the bind that completes it, in the foreground', async () => {
+    const daemon = await startShareDaemon({ amr: amrReportsUrl });
+    seedPendingBinding(daemon);
     expect(daemon.store.get(scope)?.url).toBeNull();
     // Foreground explicit retry: `vela share bind` returns the url.
     expect((await daemon.publish()).body).toMatchObject({ status: 'published', url: amrUrl('p', slug) });
@@ -308,8 +318,8 @@ describe('publish-public takes its link from AMR', () => {
   });
 
   it('the background binding retry persists the address AMR returns', async () => {
-    const daemon = await startShareDaemon({ amr: amrReportsUrl, pending: true });
-    await daemon.publish();
+    const daemon = await startShareDaemon({ amr: amrReportsUrl });
+    seedPendingBinding(daemon);
     const outbox = createShareBindingOutbox(daemon.db);
     const run = daemon.fixture.sharePublishing!.prepare;
     const startup = createShareBindingStartup(outbox, {

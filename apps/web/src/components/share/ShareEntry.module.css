@@ -8,16 +8,16 @@
   gap: 5px;
   border: 0;
   border-radius: 6px;
-  background: #282828;
-  color: #FFFFFF;
+  background: var(--share-toggle-on);
+  color: var(--share-white);
   font-size: 12px;
   font-weight: 500;
   box-shadow: none;
 }
 
 :global(.chrome-action.chrome-action-secondary).toolbar:hover:not(:disabled) {
-  background: #282828;
-  color: #FFFFFF;
+  background: var(--share-toggle-on);
+  color: var(--share-white);
 }
 
 :global(.chrome-action.chrome-action-secondary).toolbar:disabled {
@@ -38,7 +38,7 @@
   border: 0;
   border-radius: 6px;
   background: #EDEDF0;
-  color: #333333;
+  color: var(--share-text-strong);
   font-size: 12px;
   font-weight: 500;
   -webkit-backdrop-filter: none;
@@ -48,7 +48,46 @@
 
 :global(.artifact-card) .card:global(.artifact-card-act):hover:not(:disabled) {
   background: #EDEDF0;
-  color: #333333;
+  color: var(--share-text-strong);
+}
+
+/* Final G1/G2 uses a 300px reference card: 12px insets + 8px gap make
+   each 30px-high action about 133px. Multi-card grids keep two columns,
+   but narrow HTML cards stack the actions rather than painting across them. */
+:global(.artifact-card[data-kind='html']):has(.cardActions) {
+  container-type: inline-size;
+}
+:global(.artifact-cards):has(.cardActions):has(> :global(.artifact-card:only-child[data-kind='html'])) {
+  max-width: 300px;
+}
+:global(.artifact-card) .cardActions:global(.artifact-card-acts) {
+  inset-inline: 12px;
+  gap: 8px;
+}
+:global(.artifact-card) .cardActions > :global(.artifact-card-act) {
+  flex: 1;
+  min-width: 0;
+}
+:global(.artifact-card) .cardActionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@container (max-width: 245px) {
+  :global(.artifact-card) .cardActions:global(.artifact-card-acts) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  :global(.artifact-card) .cardActions > :global(.artifact-card-act) {
+    width: 100%;
+  }
+}
+:global(.artifact-card) .cardPublished:global(.artifact-card-act),
+:global(.artifact-card) .cardPublished:global(.artifact-card-act):hover:not(:disabled) {
+  background: #E3F1E6;
+  color: #2F6B3F;
 }
 
 /* Disabled appearance applies to the existing readonly/generation gates only. */

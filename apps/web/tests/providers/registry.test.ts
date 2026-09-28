@@ -1,3 +1,4 @@
+import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installMockOpenDesignHost } from '@open-design/host/testing';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
@@ -1801,10 +1802,7 @@ describe('connectConnector', () => {
   it('renders a fallback link before navigating the auth popup', async () => {
     const replace = vi.fn();
     const authWindow = {
-      document: {
-        title: '',
-        body: { innerHTML: '' },
-      },
+      document: new JSDOM('<body></body>').window.document,
       location: { replace },
       close: vi.fn(),
     };
@@ -1853,10 +1851,7 @@ describe('connectConnector', () => {
 
   it('keeps the popup open with custom auth guidance when initialization fails', async () => {
     const authWindow = {
-      document: {
-        title: '',
-        body: { innerHTML: '' },
-      },
+      document: new JSDOM('<body></body>').window.document,
       location: { replace: vi.fn() },
       close: vi.fn(),
     };
@@ -1931,10 +1926,7 @@ describe('connectConnector', () => {
 
   it('renders an info notice in the popup when the connect response carries no redirect URL', async () => {
     const authWindow = {
-      document: {
-        title: '',
-        body: { innerHTML: '' },
-      },
+      document: new JSDOM('<body></body>').window.document,
       location: { replace: vi.fn() },
       close: vi.fn(),
     };

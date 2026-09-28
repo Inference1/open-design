@@ -249,7 +249,7 @@ it('a personal record never promoted to team is cancelled after bounded deferral
 it('only the same creator in the same workspace is re-queued as Team relay', () => {
   const record = {
     workspaceId: 'w', workspaceMemberId: 'owner', teamId: 'w', relayScope: 'personal' as const, projectId: 'p', commentId: 'c',
-    expectedOwnerMemberId: 'owner', comment: {} as never, revision: 1, attemptCount: 0, nextAttemptAt: 0,
+    expectedOwnerMemberId: 'owner', comment: {} as never, eventKey: 'event-key', revision: 1, attemptCount: 0, nextAttemptAt: 0,
   };
   const team = { workspaceId: 'w', visibility: 'team', resourceState: 'active', createdByWorkspaceMemberId: 'owner' };
   expect(commentRelayRecordPromotedToTeam(record, team)).toBe(true);

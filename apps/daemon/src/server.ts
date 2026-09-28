@@ -965,6 +965,7 @@ import { registerTeamResourceShareRoutes } from './routes/team-resource-share.js
 import { createCollabRuntime } from './collab/runtime.js';
 import { createPublicFileStopStartup, createSqlitePublicFilePublicationStore } from './collab/public-file-publication-store.js';
 import { sourcePathForCurrentPublication } from './collab/comment-relay-publication-mapping.js';
+import { recordPersonalPublishedCommentMutation } from './collab/published-comment-mutation.js';
 import { createPublicFilePublicationRecorder } from './collab/public-file-publication-recording.js';
 import { enqueuePublishedFileComments } from './collab/published-file-comment-backfill.js';
 import { isPrivateTeamProjectOfCreator, markPublishedTeamProjectVisible } from './collab/public-share-team-visibility.js';
@@ -3154,6 +3155,12 @@ export interface StartServerResult {
   routeInventory: import('./route-registration-guard.js').RouteRegistration[];
 }
 
+/** Production callback shared by the registered comment routes and HTTP regression tests. */
+export function createPersonalPublishedCommentMutationHandler(db: Database.Database) {
+  return (comment: PreviewComment, context: WorkspaceCollabContext | null, deleted: boolean) =>
+    recordPersonalPublishedCommentMutation(db, comment, context, deleted);
+}
+
 export async function startServer({
   port = 7456,
   host = normalizeDaemonBindHost(process.env.OD_BIND_HOST),
@@ -5234,7 +5241,16 @@ export async function startServer({
         && item.workspaceMemberId === scope.workspaceMemberId
         && item.memberStatus === 'active'
         && item.lifecycleState !== 'deleted' && item.lifecycleState !== 'deleting');
-    }, { readAlign: scope => commentAlignment.read(scope) }),
+    }, { readAlign: scope => commentAlignment.read(scope),
+      readProjectShareState: createVelaProjectShareState({
+        dataRoot: RUNTIME_DATA_DIR, configuredEnv: configuredAmrEnv, registerPersonalProject: false,
+      }),
+      readCredential: () => {
+        const current = readVelaControlApiContext(process.env, configuredAmrEnv());
+        return current?.apiUrl && current.controlKey
+          ? { apiUrl: current.apiUrl, controlKey: current.controlKey } : null;
+      },
+    }),
   });
   const resolveFreshProjectCommentWorkspaceContext = async (
     req: any,
@@ -9026,6 +9042,7 @@ export async function startServer({
         }),
       );
     },
+    onPublishedCommentMutation: createPersonalPublishedCommentMutationHandler(db),
     ...(collabCloud
       ? {
           // Explicit UI/CLI request runs even when no project SSE subscriber

@@ -1,13 +1,33 @@
-import { useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { fetchProjectFileSharePlan } from '../../providers/registry';
+import type { SharePlanSummary } from '@open-design/contracts';
 import { useShareScopeKeyboard } from './useShareScopeKeyboard';
 import { Button } from '@open-design/components';
-import { workspaceContextHasTeamIdentity, type WorkspaceCollabContext } from '@open-design/contracts';
+import { ShareButton } from './ShareButton';
+import { SHARE_MAX_TOTAL_BYTES, shareEntryPresentation, workspaceContextHasTeamIdentity, type ShareContentFreshness, type WorkspaceCollabContext } from '@open-design/contracts';
 import type { PublicFilePublishFailureKey } from '../../collab/public-file-publish';
 import type { useT } from '../../i18n';
 import { RemixIcon } from '../RemixIcon';
+import { Icon } from '../Icon';
+import { ShareSignInButton } from './ShareSignInButton';
+import { CommentSyncBanner } from './CommentSyncBanner';
+import { useCommentSyncState } from './useCommentSyncState';
+import { LinkAccessRow } from './LinkAccessRow';
+import { ShareNoticeRow } from './ShareNoticeRow';
+import { ShareErrorRow } from './ShareErrorRow';
+import { ShareProgressButton } from './ShareProgressButton';
 import styles from './ShareTab.module.css';
-
 export type SharePublishFailureKey = PublicFilePublishFailureKey | 'fileViewer.publishFileTooLarge' | 'fileViewer.unpublishFileFailed';
+
+/** Deployment custom domains may vary; only open browser-safe HTTP(S) URLs. */
+function browsableSharePageUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl, window.location.origin);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Time-based waiting feedback, not transferred bytes. Only success may reach 1. */
 export function boundedPublishProgress(elapsedMs: number, completed: boolean): number {
@@ -16,13 +36,73 @@ export function boundedPublishProgress(elapsedMs: number, completed: boolean): n
   return Math.min(0.9, 0.9 * (1 - Math.exp(-elapsed / 5000)));
 }
 
-/** Keep idle markup unchanged; native progress and its action share one busy row. */
-function PublishProgressFrame({ value, label, children }: { value: number | null; label: string; children: ReactNode }) {
-  if (value === null) return <>{children}</>;
+/** Keep copy/copied/copying icons and labels identical across every published state. */
+export function ShareCopyLinkIcon({ copying, copied }: { copying: boolean; copied: boolean }) {
   return (
-    <div className={styles.publishControl}>
-      <progress className={styles.publishProgress} max={1} value={value} aria-label={label} />
-      {children}
+    <svg
+      width="13"
+      height="13"
+      viewBox={!copying && copied ? '0 0 16 16' : '0 0 24 24'}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={copying ? 2 : 1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className={copying ? 'icon-spin' : copied ? styles.copiedIcon : undefined}
+    >
+      <path d={copying
+        ? 'M12 3a9 9 0 1 0 9 9'
+        : copied
+        ? 'm3 8 3 3 7-7'
+        : 'M10 13.5a5 5 0 0 0 7 .2l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 10.5a5 5 0 0 0-7-.2l-3 3a5 5 0 0 0 7 7l1.7-1.7'} />
+    </svg>
+  );
+}
+
+/**
+ * S3/S4/S5/S13/K5: the one published-link block (chain-icon URL row + dark
+ * copy button). Signed-in, signed-in-prompt, and the app-level signed-out
+ * fallback all render this so a published link never changes shape with
+ * session state.
+ */
+export function SharePublishedLinkControls({ url, copying, feedback, disabled = false, title, onCopy, t }: {
+  url: string;
+  copying: boolean;
+  feedback: 'copied' | 'failed' | null;
+  disabled?: boolean;
+  title?: string;
+  onCopy: () => void;
+  t: ReturnType<typeof useT>;
+}) {
+  const copied = !copying && feedback === 'copied';
+  return (
+    <div className={`chrome-publish-plain ${styles.publishedLink}`}>
+      <div className={`chrome-publish-url ${styles.publishedUrl}`} title={url}>
+        <RemixIcon name="link" size={12} className={styles.publishedLinkIcon} />
+        {url}
+      </div>
+      <div className={`chrome-publish-actions ${styles.publishedActions}`}>
+        <ShareButton
+          variant="primary"
+          hoverLighten={false}
+          disabled={disabled || copying}
+          aria-busy={copying || undefined}
+          title={title}
+          onClick={onCopy}
+        >
+          <ShareCopyLinkIcon copying={copying} copied={copied} />
+          {copying
+            ? t('fileViewer.copyingLink')
+            : copied
+            ? t('preview.shareCopied')
+            : t('fileViewer.copyShareLink')}
+        </ShareButton>
+      </div>
+      {feedback === 'failed' ? (
+        <p className={styles.copyHint} role="status">{t('fileViewer.copyLinkManually')}</p>
+      ) : null}
     </div>
   );
 }
@@ -30,6 +110,12 @@ function PublishProgressFrame({ value, label, children }: { value: number | null
 export function ShareTab({
   menuOrigin,
   publicationStatus = null,
+  publicationFreshness = 'unknown',
+  updateCurrentFilePublic,
+  canResumeUpdateAfterLogin = false,
+  onUpdateLoginSuccess,
+  projectId,
+  filePath,
   workspaceContext,
   t,
   shareAccess,
@@ -62,6 +148,12 @@ export function ShareTab({
   menuOrigin: 'toolbar' | 'artifact-card';
   /** Exact file status from authoritative project share-state, not local URL presence. */
   publicationStatus?: 'active' | 'stopped' | null;
+  publicationFreshness?: ShareContentFreshness;
+  updateCurrentFilePublic?: () => Promise<void>;
+  canResumeUpdateAfterLogin?: boolean;
+  onUpdateLoginSuccess?: () => void;
+  projectId?: string;
+  filePath?: string;
   workspaceContext: WorkspaceCollabContext | null;
   t: ReturnType<typeof useT>;
   shareAccess: 'private' | 'workspace';
@@ -80,7 +172,7 @@ export function ShareTab({
   publishProgress: number | null;
   unpublishCurrentFilePublic: () => Promise<void>;
   viewerOnlyDisabledTitle: string;
-  publishCurrentFilePublic: () => Promise<void>;
+  publishCurrentFilePublic: (mode?: 'resume') => Promise<void>;
   publishFailureKey: SharePublishFailureKey | null;
   streaming: boolean;
   sharePageUrl: string;
@@ -92,6 +184,52 @@ export function ShareTab({
   shareLinkStatusHint: string;
 }) {
   const [copyingLink, setCopyingLink] = useState(false);
+  const [sharePlan, setSharePlan] = useState<SharePlanSummary | null>(null);
+  const [sharePlanPending, setSharePlanPending] = useState(false);
+  // S1: selected link access is only an unpublished UI intent. It never
+  // transfers bytes or creates a URL until Generate and copy is clicked.
+  const [prepublishLinkAccess, setPrepublishLinkAccess] = useState(true);
+  useEffect(() => { setPrepublishLinkAccess(true); }, [projectId, filePath]);
+  // A retained personal-project URL may outlive the signed-in workspace context.
+  // It remains readable/copyable, but mutations require an authenticated workspace.
+  const canMutatePublicShare = canPublishPublic && workspaceContext !== null;
+  const initialUnpublished = !filePublished && publicationStatus == null;
+  const linkAccessChecked = filePublished || (initialUnpublished && prepublishLinkAccess);
+  useEffect(() => {
+    let cancelled = false;
+    setSharePlan(null);
+    if (!projectId || !filePath || !canPublishPublic || viewerOnly || publicationStatus === 'stopped') { setSharePlanPending(false); return; }
+    setSharePlanPending(true);
+    void fetchProjectFileSharePlan(projectId, filePath, workspaceContext).then(
+      (plan) => { if (!cancelled) { setSharePlan(plan); setSharePlanPending(false); } },
+      () => { if (!cancelled) { setSharePlan(null); setSharePlanPending(false); } },
+    );
+    return () => { cancelled = true; };
+  }, [projectId, filePath, workspaceContext, canPublishPublic, viewerOnly, publicationStatus]);
+  const planTooLarge = sharePlan?.exceedsSizeLimit === true;
+  // K1/K4: while a comment backfill is pending, it replaces the primary
+  // action itself (progress bar or busy button) instead of stacking a
+  // second dark pill below a link the visitor can't fully trust yet.
+  // Only fetch once something is actually published — comment backfill is
+  // meaningless before that, and firing this request during the unpublished
+  // first-share flow competes for share-plan network traffic to no purpose.
+  const commentSyncState = useCommentSyncState(filePublished ? projectId : undefined, workspaceContext, { filePath });
+  const backfillPending = filePublished && commentSyncState?.backfill?.state === 'pending'
+    ? commentSyncState.backfill
+    : null;
+  // K1 design ("同步已有评论 · 12 条") names the initial batch size. An older
+  // daemon that predates CommentBackfillState.total leaves it absent, not
+  // zero — that keeps the indeterminate sweep and the generic sentence
+  // instead of rendering "0 条" for a count nobody measured.
+  const backfillTotal = typeof backfillPending?.total === 'number' && backfillPending.total > 0
+    ? backfillPending.total
+    : null;
+  const backfillProgress = backfillTotal !== null && typeof backfillPending?.synced === 'number'
+    ? Math.min(1, Math.max(0, backfillPending.synced / backfillTotal))
+    : null;
+  const updateAvailable = Boolean(updateCurrentFilePublic) && filePublished && shareEntryPresentation({
+    status: publicationStatus ?? 'none', freshness: publicationFreshness,
+  }).appearance === 'outdated';
   const copyInFlight = useRef(false);
   const { scopeTriggerRef, scopeOptionsRef, handleScopeKeyDown } = useShareScopeKeyboard({
     open: shareAccessMenuOpen,
@@ -124,195 +262,173 @@ export function ShareTab({
                             : t('fileViewer.commentSync.shareStoppedTeam')}
                         </p>
                       ) : null}
-                      {canPublishPublic ? (
+                      {canPublishPublic || filePublished ? (
                       <>
-                      <div className={styles.linkAccessHeading}>
-                        <div className={styles.linkAccessRow}>
-                          <span className={styles.linkAccessLabel}>{t('fileViewer.linkAccessTitle')}</span>
-                          <span className={styles.linkAccessRowEnd}>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={filePublished}
-                            aria-label={t('fileViewer.linkAccessTitle')}
-                            className={`${styles.linkAccessToggle}${filePublished ? ` ${styles.linkAccessToggleOn}` : ''}`}
-                            disabled={viewerOnly || publishingPublicFile || streaming}
-                            title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
-                            onClick={() => {
-                              // The switch IS the publish/unpublish control (board S4 has
-                              // no separate "stop sharing" button — see the evidence file
-                              // for why this replaces, rather than duplicates, that action).
-                              void (filePublished ? unpublishCurrentFilePublic() : publishCurrentFilePublic());
-                            }}
-                          >
-                            <span className={styles.linkAccessToggleThumb} aria-hidden="true" />
-                          </button>
-                          <Button
-                            type="button"
-                            className="share-menu-help od-tooltip"
-                            aria-label={t('fileViewer.publishSingleFileDescription')}
-                            data-tooltip={t('fileViewer.publishSingleFileDescription')}
-                            data-tooltip-placement="top"
-                            onClick={event => event.stopPropagation()}
-                          >
-                            <RemixIcon name="question-line" size={14} />
-                          </Button>
-                          </span>
-                        </div>
-                        <p className={styles.linkAccessDescription}>{t('fileViewer.linkAccessDescription')}</p>
-                      </div>
+                      <LinkAccessRow
+                        label={t('fileViewer.linkAccessTitle')}
+                        description={t('fileViewer.linkAccessDescription')}
+                        checked={linkAccessChecked}
+                        disabled={!canMutatePublicShare || viewerOnly || publishingPublicFile || (!filePublished && (streaming || sharePlanPending))}
+                        title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
+                        onToggle={() => {
+                          if (!canMutatePublicShare || viewerOnly) return;
+                          if (filePublished) void unpublishCurrentFilePublic();
+                          else if (publicationStatus === 'stopped') void publishCurrentFilePublic('resume');
+                          else setPrepublishLinkAccess(value => !value);
+                        }}
+                      />
                       {showsTeamVisibilityNotice ? (
                         // Decision 67 #11: a public link registers a private team-workspace
                         // project in the team catalog, so say so before the first publish.
                         <p className={styles.publishHint} role="note">{t('fileViewer.publishMakesProjectTeamVisible')}</p>
                       ) : null}
-                      {filePublished && publishProgress !== null ? (
-                        <progress max={1} value={publishProgress} aria-label={t('fileViewer.publishingFile')} />
+                      {publishFailureKey ? (
+                        <ShareErrorRow message={t(publishFailureKey)} />
+                      ) : planTooLarge && sharePlan ? (
+                        // No yellow advisory here (2026 UI audit: G4/S1/S2/S7/S15 — delete, no
+                        // lighter replacement). A pre-check size block still leaves the button
+                        // disabled below with no failed request to explain itself, so it borrows
+                        // the same red error row a failed attempt would show.
+                        <ShareErrorRow message={<>
+                          {t('fileViewer.publishFileTooLarge')}
+                          {' '}({(sharePlan.totalBytes / 1048576).toFixed(2)} MiB / {SHARE_MAX_TOTAL_BYTES / 1048576} MiB; {sharePlan.totalBytes} / {SHARE_MAX_TOTAL_BYTES} B)
+                        </>} />
                       ) : null}
-                      {filePublished && publishedLinkUnavailable ? (
-                        <div className="chrome-publish-plain">
-                          {/* Live publication without a Viewer origin: no link to show or
-                              copy, but the owner can still stop it by its slug. */}
+                      {filePublished ? (
+                        backfillPending ? (
+                        <div className={styles.syncStatus} role="status">
+                          {backfillPending.reopened === true ? (
+                            <ShareButton variant="primary" hoverLighten={false} disabled aria-busy="true">
+                              <Icon name="share-spinner" size={13} strokeWidth={2} className="icon-spin" />
+                              <span>{t('fileViewer.commentSync.reopenSyncBusy')}</span>
+                            </ShareButton>
+                          ) : (
+                            <>
+                            <ShareProgressButton
+                              variant="sync"
+                              determinate={backfillProgress !== null}
+                              percent={backfillProgress ?? 0}
+                              label={backfillTotal !== null
+                                ? t('fileViewer.commentSync.backfillPendingCountBody', { count: backfillTotal })
+                                : t('fileViewer.commentSync.backfillPendingBody')}
+                            />
+                            <p className={styles.publishHint}>{t('fileViewer.publishingContinuesOnClose')}</p>
+                            </>
+                          )}
+                        </div>
+                        ) : (
+                        <>
+                        {publishedLinkUnavailable ? (
+                          // Live publication without a Viewer address: no link to show or
+                          // copy, but the owner can still stop it with the switch above.
                           <p className={styles.publishHint} role="status">{t('fileViewer.publicLinkUnavailable')}</p>
-                          <div className="chrome-publish-actions">
-                            <button
-                              type="button"
-                              className="chrome-publish-button chrome-publish-button--ghost"
-                              disabled={viewerOnly || publishingPublicFile}
-                              title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
-                              onClick={() => {
-                                void unpublishCurrentFilePublic();
-                              }}
-                            >
-                              {t('fileViewer.unpublishFile')}
-                            </button>
-                          </div>
-                        </div>
-                      ) : filePublished ? (
-                        <div className="chrome-publish-plain">
-                          <div className={`chrome-publish-url${publishLinkFeedback === 'failed' ? ` ${styles.copyFallback}` : ''}`} title={publishedFileUrl}>
-                              {publishedFileUrl}
-                            </div>
-                            <div className="chrome-publish-actions">
-                              <Button
-                                type="button"
-                                className={styles.copyButton}
-                                disabled={streaming || copyingLink}
-                                aria-busy={copyingLink || undefined}
-                                title={streaming ? t('fileViewer.shareAfterGenerationComplete') : undefined}
-                                onClick={() => {
-                                  void handleCopyPublishedFileLink();
-                                }}
+                        ) : (
+                        <SharePublishedLinkControls
+                          url={publishedFileUrl}
+                          copying={copyingLink}
+                          feedback={publishLinkFeedback}
+                          disabled={streaming}
+                          title={streaming ? t('fileViewer.shareAfterGenerationComplete') : undefined}
+                          onCopy={() => { void handleCopyPublishedFileLink(); }}
+                          t={t}
+                        />
+                        )}
+                        {!canMutatePublicShare && canResumeUpdateAfterLogin ? (
+                          <ShareNoticeRow
+                            message={t('fileViewer.shareOutdatedSignInHint')}
+                            action={
+                              <ShareSignInButton variant="soft"
+                                actionLabel={t('fileViewer.signInToUpdate')}
+                                onLoginSuccess={onUpdateLoginSuccess} />
+                            }
+                          />
+                        ) : null}
+                        {updateAvailable ? (
+                          <ShareNoticeRow
+                            message={t('fileViewer.shareUpdateHint')}
+                            action={
+                              <ShareButton
+                                variant="soft"
+                                disabled={!canMutatePublicShare || viewerOnly || streaming || publishingPublicFile || sharePlanPending || planTooLarge}
+                                aria-busy={publishingPublicFile || undefined}
+                                onClick={() => { if (canMutatePublicShare && !viewerOnly) void updateCurrentFilePublic?.(); }}
                               >
-                                <svg
-                                  width="13"
-                                  height="13"
-                                  viewBox={!copyingLink && publishLinkFeedback === 'copied' ? '0 0 16 16' : '0 0 24 24'}
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth={copyingLink ? 2 : 1.8}
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  aria-hidden="true"
-                                  focusable="false"
-                                  className={copyingLink ? 'icon-spin' : publishLinkFeedback === 'copied' ? styles.copiedIcon : undefined}
-                                >
-                                  <path d={copyingLink
-                                    ? 'M12 3a9 9 0 1 0 9 9'
-                                    : publishLinkFeedback === 'copied'
-                                    ? 'm3 8 3 3 7-7'
-                                    : 'M10 13.5a5 5 0 0 0 7 .2l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 10.5a5 5 0 0 0-7-.2l-3 3a5 5 0 0 0 7 7l1.7-1.7'} />
-                                </svg>
-                                {copyingLink
-                                  ? t('fileViewer.copyingLink')
-                                  : publishLinkFeedback === 'copied'
-                                  ? t('fileViewer.copied')
-                                  : t('fileViewer.copyShareLink')}
-                              </Button>
-                              <button
-                                type="button"
-                                className="chrome-publish-button chrome-publish-button--ghost"
-                                disabled={viewerOnly || publishingPublicFile}
-                                title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
-                                onClick={() => {
-                                  void unpublishCurrentFilePublic();
-                                }}
-                              >
-                                {t('fileViewer.unpublishFile')}
-                              </button>
-                          </div>
-                          {publishLinkFeedback === 'failed' ? (
-                            <p className={styles.copyHint} role="status">{t('fileViewer.copyLinkManually')}</p>
-                          ) : null}
-                        </div>
+                                {t('fileViewer.shareUpdateLink')}
+                              </ShareButton>
+                            }
+                          />
+                        ) : null}
+                        </>
+                        )
                       ) : (
-                        <PublishProgressFrame value={publishProgress} label={t('fileViewer.uploadingFile')}>
-                        <Button
-                          type="button"
-                          className={`${styles.copyButton}${publishingPublicFile && publishProgress !== null ? ` ${styles.publishingButton}` : ''}`}
+                        <>
+                        {/* 2026 UI audit (G4/S1/S2/S7/S15): the plan-unavailable and
+                            missing-refs advisories were yellow banners; deleted, no lighter
+                            replacement. Neither ever blocked publishing (unlike planTooLarge
+                            above), so there is no reason left to surface here. */}
+                        {publicationStatus !== 'stopped' || publishingPublicFile ? (
+                        <ShareProgressButton variant="upload" value={publicationStatus === 'stopped' ? null : publishProgress} label={t('fileViewer.uploadingFile')}>
+                        <ShareButton
+                          variant="primary"
+                          hoverLighten={false}
+                          transparentWhenBusy={publishingPublicFile && publicationStatus !== 'stopped' && publishProgress !== null}
                           role="menuitem"
-                          disabled={streaming || viewerOnly || publishingPublicFile}
+                          disabled={streaming || viewerOnly || publishingPublicFile || sharePlanPending || planTooLarge || (initialUnpublished && !prepublishLinkAccess)}
                           aria-busy={publishingPublicFile}
                           title={viewerOnly ? viewerOnlyDisabledTitle : streaming ? t('fileViewer.shareAfterGenerationComplete') : undefined}
                           onClick={() => {
-                            void publishCurrentFilePublic();
+                            void publishCurrentFilePublic(publicationStatus === 'stopped' ? 'resume' : undefined);
                           }}
                         >
                           {publishingPublicFile ? (
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" focusable="false" className="icon-spin">
-                              <path d="M12 3a9 9 0 1 0 9 9" />
-                            </svg>
+                            <Icon name="share-spinner" size={13} strokeWidth={2} className="icon-spin" />
+                          ) : publishFailureKey === 'fileViewer.publishFileFailed' ? (
+                            <Icon name="share-refresh-arrows" size={13} strokeWidth={1.8} />
                           ) : (
-                            <svg
-                              width="13"
-                              height="13"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.8"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden="true"
-                              focusable="false"
-                            >
-                              <path d="M12 15V4m-4 4 4-4 4 4M5 20h14" />
-                            </svg>
+                            <Icon name="share-upload-arrow" size={13} strokeWidth={1.8} />
                           )}
                           <span>{publishingPublicFile
-                            ? `${t('fileViewer.uploadingFile')}${publishProgress !== null ? ` ${Math.round(publishProgress * 100)}%` : ''}`
+                            ? publicationStatus === 'stopped' ? t('fileViewer.shareReopening') : `${t('fileViewer.uploadingFile')}${publishProgress !== null ? ` ${Math.round(publishProgress * 100)}%` : ''}`
                             : publishFailureKey === 'fileViewer.publishFileFailed' || publishFailureKey === 'fileViewer.publishFileTooLarge'
                               ? t('preview.retry')
                               : t('fileViewer.generateAndCopyLink')}</span>
-                        </Button>
-                        </PublishProgressFrame>
+                        </ShareButton>
+                        </ShareProgressButton>
+                        ) : null}
+                        </>
                       ) }
-                      {publishingPublicFile && !filePublished ? (
+                      {publishingPublicFile && !filePublished && publicationStatus !== 'stopped' ? (
                         <p className={styles.publishHint}>{t('fileViewer.publishingContinuesOnClose')}</p>
                       ) : null}
-                      {publishFailureKey ? (
-                        <p className={styles.publishError} role="status">
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            aria-hidden="true"
-                            focusable="false"
-                          >
-                            <circle cx="8" cy="8" r="6.2" />
-                            <path d="M8 4.8v3.6M8 11h.01" />
-                          </svg>
-                          <span>{t(publishFailureKey)}</span>
-                        </p>
-                      ) : null}
                       </>
-                      ) : null}
+                      ) : (
+                        <div className={styles.signInPrompt}>
+                          <div className={styles.linkAccessHeading}>
+                            <span className={styles.linkAccessLabel}>{t('fileViewer.linkAccessTitle')}</span>
+                            <p className={styles.linkAccessDescription}>{t(canResumeUpdateAfterLogin ? 'fileViewer.shareOutdatedSignInHint' : 'fileViewer.signInToShareDescription')}</p>
+                          </div>
+                          {filePublished && publishedFileUrl ? (
+                            <SharePublishedLinkControls
+                              url={publishedFileUrl}
+                              copying={copyingLink}
+                              feedback={publishLinkFeedback}
+                              disabled={streaming}
+                              onCopy={() => { void handleCopyPublishedFileLink(); }}
+                              t={t}
+                            />
+                          ) : null}
+                          {/* S0: the sole full-width primary action when nothing has
+                              ever been shared. When a stale link is already shown above
+                              (the filePublished branch just above), this instead plays
+                              S13's secondary "sign in to update" role next to it. */}
+                          <ShareSignInButton variant={filePublished && publishedFileUrl ? 'soft' : 'primary'}
+                            actionLabel={canResumeUpdateAfterLogin ? t('fileViewer.signInToUpdate') : t('fileViewer.signInToShare')}
+                            onLoginSuccess={canResumeUpdateAfterLogin ? onUpdateLoginSuccess : undefined} />
+                        </div>
+                      )}
                       {/* Team-only, same as ReactComponentViewer's copy of this card above —
                           see the comment there (recvq5bM78HWCE). */}
-                      {menuOrigin === 'toolbar' && workspaceContextHasTeamIdentity(workspaceContext) ? (
+                      {workspaceContextHasTeamIdentity(workspaceContext) ? (
                       <>
                       <div className={styles.scopeHeading}>
                         <div className={styles.scopeRow}>
@@ -349,9 +465,7 @@ export function ShareTab({
                                   ? t('fileViewer.workspaceAccessPrivate')
                                   : t('fileViewer.workspaceAccessMembers')}
                               </span>
-                              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-                                <path d="m4 6 4 4 4-4" />
-                              </svg>
+                              <Icon name="share-chevron-down" size={12} strokeWidth={1.5} />
                             </button>
                             {shareAccessMenuOpen ? (
                               <div className="chrome-access-options" role="listbox" ref={scopeOptionsRef}>
@@ -371,9 +485,7 @@ export function ShareTab({
                                     <span className="share-menu-icon"><RemixIcon name={icon} size={16} /></span>
                                     <span>{label}</span>
                                     {shareAccess === value ? (
-                                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-                                        <path d="m3 8 3 3 7-7" />
-                                      </svg>
+                                      <Icon name="share-check" size={13} strokeWidth={1.8} />
                                     ) : null}
                                   </button>
                                 ))}
@@ -430,7 +542,8 @@ export function ShareTab({
                                 }
                                 onClick={() => {
                                   if (!canOpenSharePage) return;
-                                  window.open(sharePageUrl, '_blank', 'noopener');
+                                  const url = browsableSharePageUrl(sharePageUrl);
+                                  if (url) window.open(url, '_blank', 'noopener,noreferrer');
                                 }}
                               >
                                 <span className="share-menu-icon"><RemixIcon name="external-link-line" size={15} /></span>
@@ -444,6 +557,9 @@ export function ShareTab({
                             </div>
                           ) : null}
                         </>
+                      ) : null}
+                      {menuOrigin === 'toolbar' && filePublished ? (
+                        <CommentSyncBanner projectId={projectId} workspaceContext={workspaceContext} filePath={filePath} backfillOnly />
                       ) : null}
                       </div>
   );

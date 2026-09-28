@@ -177,9 +177,9 @@ function reactComponentFile(): ProjectFile {
 
 // The publish trigger is the Share panel's `role="menuitem"` row labelled by
 // `fileViewer.publishSingleFileTitle`; once published it is replaced by the
-// copy-link / `fileViewer.unpublishFile` pair.
+// copy-link control and the single link-access switch.
 const PUBLISH_ROW = /generate and copy link|get a share link/i;
-const UNPUBLISH_ROW = /stop sharing/i;
+const UNPUBLISH_ROW = /link access/i;
 // HTML uses `fileViewer.uploadingFile`; the legacy React card still uses
 // `fileViewer.publishingFile`. Both labels identify the in-flight row, and the
 // state the publish handler leaves behind only once its `finally` has run.
@@ -194,19 +194,6 @@ async function openPublishPanel() {
     projectKind: 'prototype',
     file: htmlFile(),
     liveHtml: '<html><body><h1>Hello</h1></body></html>',
-  });
-  const shareButton = await screen.findByRole('button', { name: /^share$/i });
-  fireEvent.click(shareButton);
-  return await screen.findByRole('menuitem', { name: PUBLISH_ROW });
-}
-
-// Same flow through the ReactComponentViewer copy of the publish card, which
-// is hand-duplicated from HtmlViewer and can regress independently.
-async function openReactComponentPublishPanel() {
-  renderProjectFileViewer(teamWorkspaceContext(), {
-    projectId: 'project-pub',
-    projectKind: 'prototype',
-    file: reactComponentFile(),
   });
   const shareButton = await screen.findByRole('button', { name: /^share$/i });
   fireEvent.click(shareButton);
@@ -228,28 +215,6 @@ function trackedOptions(name: string): unknown[] {
     .filter(([event]) => event === name)
     .map(([, , options]) => options);
 }
-
-describe('Viewer link unavailable (no Viewer origin configured)', () => {
-  it('ReactComponentViewer keeps a URL-less publication published: no Publish row, no copy, stop by slug', async () => {
-    const fetchMock = stubFetch({
-      publishBody: {
-        status: 'published',
-        receipt: { filePath: 'App.jsx', slug: 'slug-1', publishedAt: 1, version: 1, versionId: 'v1' },
-        link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' },
-      },
-    });
-    fireEvent.click(await openReactComponentPublishPanel());
-    await screen.findByText('Published, but the share link is temporarily unavailable.');
-    expect(screen.queryByRole('menuitem', { name: PUBLISH_ROW })).toBeNull();
-    expect(screen.queryByRole('button', { name: /copy share link/i })).toBeNull();
-    const posts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).includes('publish-public') && init?.method === 'POST');
-    expect(posts()).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: UNPUBLISH_ROW }));
-    await screen.findByRole('menuitem', { name: PUBLISH_ROW });
-    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE' && init.body === JSON.stringify({ slug: 'slug-1' }))).toBe(true);
-    expect(posts()).toHaveLength(1);
-  });
-});
 
 describe('publish flow analytics', () => {
   it('reports the publish click, the success result, and the copy-link click', async () => {
@@ -313,7 +278,7 @@ describe('publish flow analytics', () => {
     const publishButton = await openPublishPanel();
     fireEvent.click(publishButton);
 
-    const unpublishButton = await screen.findByRole('button', { name: UNPUBLISH_ROW });
+    const unpublishButton = await screen.findByRole('switch', { name: UNPUBLISH_ROW });
     fireEvent.click(unpublishButton);
     await waitFor(() => {
       expect(trackedEvents('artifact_publish_result')).toContainEqual(
@@ -329,7 +294,7 @@ describe('publish flow analytics', () => {
   it('S10 keeps the link and retry action without claiming a clipboard failure when stopping fails', async () => {
     const fetchMock = stubFetch({ unpublishStatus: 500 });
     fireEvent.click(await openPublishPanel());
-    const stop = await screen.findByRole('button', { name: UNPUBLISH_ROW });
+    const stop = await screen.findByRole('switch', { name: UNPUBLISH_ROW });
     fireEvent.click(stop);
     await screen.findByText('Could not turn off the link. Please try again.');
     expect(stop).toBeEnabled();
@@ -350,7 +315,7 @@ describe('publish flow analytics', () => {
     const publishButton = await openPublishPanel();
     fireEvent.click(publishButton);
 
-    const unpublishButton = await screen.findByRole('button', { name: UNPUBLISH_ROW });
+    const unpublishButton = await screen.findByRole('switch', { name: UNPUBLISH_ROW });
     fireEvent.click(unpublishButton);
     await waitFor(() => {
       expect(trackedEvents('artifact_publish_result')).toContainEqual(
@@ -449,14 +414,30 @@ describe('publish flow analytics', () => {
     },
     'HtmlViewer',
   );
-  inactiveViewerCase(
-    { projectId: 'project-pub', projectKind: 'prototype', file: reactComponentFile() },
-    'ReactComponentViewer',
-  );
+  it('does not publish or report publish analytics for a React component, even when retained', async () => {
+    const fetchMock = stubFetch();
+    const props: ComponentProps<typeof FileViewer> = {
+      projectId: 'project-pub',
+      projectKind: 'prototype',
+      file: reactComponentFile(),
+    };
+    const { rerenderWith } = renderProjectFileViewer(teamWorkspaceContext(), props);
+    const shareButton = await screen.findByRole('button', { name: /^share$/i });
+    await waitFor(() => expect(shareButton).toBeDisabled());
+    fireEvent.click(shareButton);
+    expect(screen.queryByRole('menuitem', { name: PUBLISH_ROW })).toBeNull();
 
-  it('reports the project kind and artifact kind from the ReactComponentViewer copy of the flow', async () => {
+    rerenderWith({ ...props, workspaceActive: false });
+    rerenderWith({ ...props, workspaceActive: true });
+    expect(await screen.findByRole('button', { name: /^share$/i })).toBeDisabled();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('publish-public'))).toBe(false);
+    expect(trackedEvents('ui_click').filter((event) => event.element === 'publish_file')).toEqual([]);
+    expect(trackedEvents('artifact_publish_result')).toEqual([]);
+  });
+
+  it('reports the project kind and artifact kind from a supported HTML publication', async () => {
     stubFetch();
-    const publishButton = await openReactComponentPublishPanel();
+    const publishButton = await openPublishPanel();
     fireEvent.click(publishButton);
 
     expect(trackedEvents('ui_click')).toContainEqual(
@@ -561,7 +542,7 @@ describe('publish failure detail analytics', () => {
       },
     });
     fireEvent.click(await openPublishPanel());
-    fireEvent.click(await screen.findByRole('button', { name: UNPUBLISH_ROW }));
+    fireEvent.click(await screen.findByRole('switch', { name: UNPUBLISH_ROW }));
 
     await waitFor(() => {
       expect(trackedEvents('artifact_publish_result')).toContainEqual(

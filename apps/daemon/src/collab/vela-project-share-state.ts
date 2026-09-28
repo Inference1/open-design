@@ -22,6 +22,8 @@ export function createVelaProjectShareState(options: {
   runCommand?: typeof runPinnedVelaCommand;
   /** Persisted local authorship, never inferred from the current reader. */
   resolveLocalProjectOwner?: (projectId: string, workspaceId: string) => string | null;
+  /** K3 status GET must never upsert a missing personal catalog row. */
+  registerPersonalProject?: boolean;
 }): ReadProjectShareState {
   return async scope => {
     const identity = Object.freeze({ ...scope });
@@ -38,7 +40,7 @@ export function createVelaProjectShareState(options: {
     // Omitted sync/version/metadata fields preserve any existing cloud state.
     const personalWorkspace = directory.items.find(item => item.workspaceId === identity.resourceTeamId
       && item.workspaceMemberId === identity.ownerMemberId && item.workspaceType === 'personal');
-    if (personalWorkspace
+    if (options.registerPersonalProject !== false && personalWorkspace
       && options.resolveLocalProjectOwner?.(identity.projectId, identity.resourceTeamId) === identity.ownerMemberId) {
       await (options.runCommand ?? runPinnedVelaCommand)({
         args: ['team-projects', 'upsert', identity.projectId, '--resource-id', projectResourceIdFor(identity.projectId,
