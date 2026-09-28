@@ -22,7 +22,7 @@ export const REFERENCE_CASES = {
   },
   'eval-OD-EVAL-028': {
     prompt: '为数字人视频生成工具设计 Electron 桌面客户端的新建项目页。左侧输入主题、选择数字人口播或纯动画、上传照片和声音样本、选择画幅并开启可选动效；右侧实时预览、参数摘要、预计时长与成本。点击开始生成后展示上传、生成和合成三个阶段的进度，以及取消和失败重试。',
-    sha256: '7be926dd9f4dbe95d2f2976919f5c8cb3d9b18bcf69983f029bb01a18435545d',
+    sha256: '209a5ebb3b7b6d0075ede0416003063ebaad1bdfbe5981ef721c361dff6ab3bf',
     fileName: 'OD-EVAL-028.png',
   },
 } as const;

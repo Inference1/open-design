@@ -13,7 +13,7 @@ and attaches one frozen image through the ordinary upload pipeline:
 |-|-|-|-|
 | OD-EVAL-022 | OD-EVAL-022.jpg | cannele.framer.website/projects (Calenne template), 1265x712 | 7a91ed25… |
 | OD-EVAL-003 | OD-EVAL-003.webp | edOS Teacher Dashboard product screenshot, 1440x1452 | 8ab60e2e… |
-| OD-EVAL-028 | OD-EVAL-028.png | HeyGen Avatar IV create form, 2274x1440 | 7be926dd… |
+| OD-EVAL-028 | OD-EVAL-028.png | Kling AI creative space, official guide kling.ai/quickstart/ai-lip-sync-guide, 1653x958 | 209a5ebb… |
 
 Missing or corrupt images fail the request rather than silently producing a
 text-only treatment. Do not merge or deploy this branch.
