@@ -124,6 +124,36 @@ describe('HomeView media composer options', () => {
     });
   });
 
+  it('keeps Vela as the default image route for an OAuth-only OpenAI marker', async () => {
+    stubFetch();
+    const onSubmit = vi.fn();
+    renderHome({
+      onSubmit,
+      mediaProviders: {
+        openai: {
+          apiKey: '',
+          apiKeyConfigured: true,
+          apiKeyTail: 'oauth',
+          baseUrl: '',
+          source: 'oauth-codex',
+        },
+      },
+    });
+
+    await clickHomeRailChip('image');
+    await setHomePrompt('Create a managed product image.');
+    await submitHome();
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+        projectMetadata: expect.objectContaining({
+          kind: 'image',
+          imageModel: 'vela/gpt-image-2',
+        }),
+      }));
+    });
+  });
+
   it('defaults to Design mode with no mode picker in the composer', async () => {
     stubFetch();
     const onSubmit = vi.fn();

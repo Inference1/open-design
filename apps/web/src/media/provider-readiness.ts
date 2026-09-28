@@ -22,7 +22,8 @@ export function prioritizeConfiguredMediaModels(
     .map((model, index) => ({
       model,
       index,
-      configured: isStoredMediaProviderEntryPresent(mediaProviders[model.provider]),
+      configured: isStoredMediaProviderEntryPresent(mediaProviders[model.provider])
+        && isMediaProviderPickerReady(model.provider, mediaProviders),
     }))
     .sort((a, b) => Number(b.configured) - Number(a.configured) || a.index - b.index)
     .map(({ model }) => model);
@@ -55,6 +56,5 @@ function isOpenAIOAuthOnlyEntry(entry: MediaProviderCredentials | null | undefin
   return (source === 'oauth-codex' || source === 'oauth-hermes')
     && !entry?.apiKey?.trim()
     && !entry?.baseUrl?.trim()
-    && !entry?.model?.trim()
-    && !entry?.apiKeyTail?.trim();
+    && !entry?.model?.trim();
 }
