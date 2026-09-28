@@ -1079,10 +1079,18 @@ export interface ProjectFilePublicShareResponse {
   /** A durable publication can exist without a copyable URL. Re-reading after
    * configuration is repaired can recover its link without uploading again. */
   link?: SharePublishLinkUnavailable;
+  /** Stable alias of that durable publication, present only together with
+   * `link`, so the owner can still stop the share while no URL is shown. */
+  slug?: string;
   /** From the lifecycle source, not inferred from `publication`. */
   status: ShareStatus;
   /** From a content fingerprint comparison; `unknown` until one is available. */
   freshness: ShareContentFreshness;
+  /** Present only when the lifecycle source could not be read (for example
+   * offline): `publication` / `link` are the daemon's last persisted record and
+   * `status` is `active` because that record exists, not because the lifecycle
+   * source confirmed it. The next successful read replaces all three. */
+  stale?: true;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1679,9 +1687,20 @@ export interface SharePublishedLink {
  */
 export interface SharePublishLinkUnavailable {
   status: 'unavailable';
-  code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE';
+  code: PublicShareLinkUnavailableCode;
 }
 
+/**
+ * Why a publication has no address to show. The share address comes from AMR
+ * (its share-shell origin), or from an explicit local override:
+ *
+ * - `PUBLIC_SHARE_WEB_URL_UNAVAILABLE` — no share-shell origin is configured,
+ *   AMR has not reported an address yet, or what it reported failed the
+ *   daemon's verification.
+ * - `PUBLIC_SHARE_IDENTITY_INVALID` — the alias is not a stable share id (for
+ *   example a legacy snapshot slug), so no Viewer address exists for it.
+ */
+export type PublicShareLinkUnavailableCode = 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' | 'PUBLIC_SHARE_IDENTITY_INVALID';
 /** POST /api/projects/:id/files/:path/publish-public.
  * Omitted mode always means a fresh publish/update; only a previously stopped
  * authoritative alias may be reopened without transferring file bytes.
@@ -1698,11 +1717,22 @@ export interface ShareUnpublishResponse {
   fileName: string;
 }
 
-export type SharePublishResponse =
+export type SharePublishResponse = (
   | ({ status: 'published'; receipt: SharePublishReceipt; link?: never } & SharePublishedLink)
   | { status: 'published'; receipt: SharePublishReceipt; url?: never; link: SharePublishLinkUnavailable }
   | ({ status: 'binding_pending'; receipt: SharePublishReceipt; binding: SharePublishBindingPending }
-      & ({ url: string; link?: never } | { url?: never; link?: SharePublishLinkUnavailable }));
+      & ({ url: string; link?: never } | { url?: never; link?: SharePublishLinkUnavailable }))
+) & SharePublishTeamVisibility;
+
+/**
+ * Present only when THIS publish turned a private project in a team workspace
+ * into a team-visible one (decision 67 #11): a public link registers the
+ * project in the team catalog, so every team member can now see it. The UI
+ * says so before the first publish; the CLI prints the same notice after.
+ */
+export interface SharePublishTeamVisibility {
+  madeTeamVisible?: true;
+}
 
 /**
  * Has this project ever been shared — as opposed to being shared right now?

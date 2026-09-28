@@ -43,6 +43,7 @@ import {
   patchPreviewCommentSortKey,
   patchPreviewCommentStatus,
   updateDeployConfig,
+  COMMENT_PULL_TIMEOUT_MS,
   uploadProjectFiles,
   upsertPreviewComment,
   writeProjectTextFileDetailed,
@@ -66,6 +67,29 @@ describe('explicit comment pull in the UI provider', () => {
       ? new Response(null, { status: 503 })
       : new Response(JSON.stringify({ comments: [{ id: 'local' }] }), { status: 200 }));
     expect(await fetchPreviewComments('p', 'conv', personalWorkspaceContext(), true)).toEqual([{ id: 'local' }]);
+  });
+});
+
+describe('comment pull deadline', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('falls back to the local list when the remote pull outlives its deadline', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/pull')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ comments: [{ id: 'local' }] }), { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const read = fetchPreviewComments('p', 'conv', personalWorkspaceContext(), true);
+    await vi.advanceTimersByTimeAsync(COMMENT_PULL_TIMEOUT_MS);
+    await expect(read).resolves.toEqual([{ id: 'local' }]);
   });
 });
 

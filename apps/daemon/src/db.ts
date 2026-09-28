@@ -29,6 +29,7 @@ import {
 import { migrateCollabSyncSnapshots } from './collab/sync-snapshot-store.js';
 import { migrateCommentRelayOutbox } from './collab/comment-relay-outbox.js';
 import { migratePublicFilePublications } from './collab/public-file-publication-store.js';
+import { migrateCommentInboundStore } from './collab/comment-inbound-store.js';
 import { migrateAmrTerminalReportOutbox } from './storage/amr-terminal-report-outbox.js';
 import {
   collapseWorkspaceProjectHomes,
@@ -591,6 +592,20 @@ function migrate(db: SqliteDb): void {
   if (!previewCommentAuthorCols.some((c: DbRow) => c.name === 'author_key')) {
     db.exec(`ALTER TABLE preview_comments ADD COLUMN author_key TEXT`);
   }
+  // The highest collab-cloud revision `seq` this row's synced state already
+  // reflects (see mergeSyncedPreviewComment). It is the sync ordering key, not
+  // a display number: `pin_seq` keeps the create's seq for pin labels and must
+  // never be read as a revision cursor. NULL = unknown (a local-only row, or a
+  // row synced before this column existed). Added after the table rebuilds
+  // above for the same reason as the author columns.
+  if (!previewCommentAuthorCols.some((c: DbRow) => c.name === 'cloud_revision_seq')) {
+    db.exec(`ALTER TABLE preview_comments ADD COLUMN cloud_revision_seq INTEGER`);
+  }
+  // The seq space `cloud_revision_seq` was counted in (relay team + stream
+  // epoch). A seq from another stream is not comparable to it.
+  if (!previewCommentAuthorCols.some((c: DbRow) => c.name === 'cloud_revision_stream')) {
+    db.exec(`ALTER TABLE preview_comments ADD COLUMN cloud_revision_stream TEXT`);
+  }
   // Read markers are project-scoped; the viewer filters its current file.
   db.exec(`
     CREATE TABLE IF NOT EXISTS project_comment_read_state (
@@ -665,6 +680,7 @@ function migrate(db: SqliteDb): void {
   migrateCommentRelayOutbox(db);
   migrateAmrTerminalReportOutbox(db);
   migratePublicFilePublications(db);
+  migrateCommentInboundStore(db);
 }
 
 /**
@@ -4008,14 +4024,63 @@ export function confirmPreviewCommentPinSeq(
   seq: number,
 ): boolean {
   if (!Number.isFinite(seq)) return false;
-  const result = db
+  return db.transaction(() => {
+    const row = db
+      .prepare(
+        `SELECT file_path AS filePath FROM preview_comments
+          WHERE id = ? AND project_id = ? AND pin_seq_confirmed = 0`,
+      )
+      .get(id, projectId) as { filePath?: unknown } | undefined;
+    if (!row || typeof row.filePath !== 'string') return false;
+    const pinSeq = distinctConfirmedPinSeq(db, projectId, row.filePath, id, Math.round(seq));
+    return db
+      .prepare(
+        `UPDATE preview_comments
+            SET pin_seq = ?, pin_seq_confirmed = 1
+          WHERE id = ? AND project_id = ? AND pin_seq_confirmed = 0`,
+      )
+      .run(pinSeq, id, projectId).changes > 0;
+  })();
+}
+
+function nextPinSeq(db: SqliteDb, projectId: string, filePath: string, excludeId: string): number {
+  const pinScope = db
     .prepare(
-      `UPDATE preview_comments
-          SET pin_seq = ?, pin_seq_confirmed = 1
-        WHERE id = ? AND project_id = ? AND pin_seq_confirmed = 0`,
+      `SELECT COALESCE(MAX(pin_seq), 0) AS maxPinSeq
+         FROM preview_comments
+        WHERE project_id = ? AND file_path = ? AND id <> ?`,
     )
-    .run(Math.round(seq), id, projectId);
-  return result.changes > 0;
+    .get(projectId, filePath, excludeId) as DbRow;
+  return Number(pinScope?.maxPinSeq ?? 0) + 1;
+}
+
+/**
+ * Invariant: no two SETTLED pins of one file share a number. The cloud `seq`
+ * is the preferred number, but it can only be adopted when no other confirmed
+ * row of the file already holds it. Confirmed rows the cloud never numbered —
+ * comments written while a project was private and relayed later by the
+ * publish backfill, or never relayed at all — keep their local numbers, and a
+ * cloud seq landing on one of them would show two pins labelled the same
+ * (share P0 integration: two "1."). In that case take the next free number.
+ * Provisional (unconfirmed) rows are not blockers: they move to their own
+ * cloud seq when their push resolves, which is how two devices converge.
+ */
+function distinctConfirmedPinSeq(
+  db: SqliteDb,
+  projectId: string,
+  filePath: string,
+  id: string,
+  preferred: number,
+): number {
+  const taken = db
+    .prepare(
+      `SELECT 1 FROM preview_comments
+        WHERE project_id = ? AND file_path = ? AND id <> ?
+          AND pin_seq = ? AND pin_seq_confirmed = 1
+        LIMIT 1`,
+    )
+    .get(projectId, filePath, id, preferred);
+  return taken ? nextPinSeq(db, projectId, filePath, id) : preferred;
 }
 
 /**
@@ -4358,6 +4423,37 @@ function syncedCommentLabel(incoming: unknown, stored: unknown, elementId: unkno
     ?? (element && !/^path-\d+(?:-\d+)*$/.test(element) ? element : 'Annotation');
 }
 
+type SyncedRevision = { seq: number | null; updatedAt: number | null };
+
+/**
+ * Ordering rule for an inbound collab-cloud revision against a stored row.
+ *
+ * - The cloud `seq` is the sole sync cursor. When both sides know one in the
+ *   same stream (the caller passes stored seq only for a matching stream), an
+ *   incoming `seq` at or below the row's `cloud_revision_seq` is a replay (a
+ *   restarted daemon re-pulling from 0, a member snapshot, a relay echo) and
+ *   never overwrites the row: `same-revision` at equality (metadata hydration
+ *   only), `stale` below it.
+ * - A revision the row has not seen yet — a higher `seq`, or any `seq` for a
+ *   row that has none recorded — still honours the business last-writer-wins
+ *   rule on `updatedAt` when the incoming record carries one, so a local edit
+ *   not yet relayed is not clobbered by an older cloud edit. A record with no
+ *   `updatedAt` cannot contest the row on time and is applied in `seq` order.
+ * - Without an incoming `seq` (an older relay build) only `updatedAt` orders,
+ *   and a record with no `updatedAt` is never assumed to be newest.
+ */
+export function syncedCommentRevisionIsNewer(
+  incoming: SyncedRevision,
+  stored: { seq: number | null; updatedAt: number },
+): 'apply' | 'same-revision' | 'stale' {
+  if (incoming.seq !== null && stored.seq !== null && incoming.seq <= stored.seq) {
+    return incoming.seq === stored.seq ? 'same-revision' : 'stale';
+  }
+  if (incoming.updatedAt === null) return incoming.seq !== null ? 'apply' : 'stale';
+  if (incoming.updatedAt > stored.updatedAt) return 'apply';
+  return incoming.updatedAt === stored.updatedAt ? 'same-revision' : 'stale';
+}
+
 /**
  * Merge one collab-cloud comment into local `preview_comments`. The cloud
  * comment's id is used verbatim as the local id (it is the author daemon's own
@@ -4366,11 +4462,9 @@ function syncedCommentLabel(incoming: unknown, stored: unknown, elementId: unkno
  * - Tombstone (`deleted: true`): delete the local row by id. Delete wins
  *   unconditionally (it does not compare `updatedAt`).
  * - Create/edit: UPSERT by id. A brand-new id inserts; an existing id updates
- *   IN PLACE only when the incoming `updatedAt` is strictly newer
- *   (last-writer-wins), so a re-pull of an unchanged comment is a no-op and a
- *   stale edit never overwrites a fresher local one. Comments are keyed by id,
- *   so multiple notes on the same element coexist, including from the same
- *   member.
+ *   IN PLACE only when {@link syncedCommentRevisionIsNewer} says so. Comments
+ *   are keyed by id, so multiple notes on the same element coexist, including
+ *   from the same member.
  *
  * `conversationId` is the LOCAL project comment anchor (see
  * getProjectCommentAnchorConversationId);
@@ -4384,6 +4478,7 @@ export function mergeSyncedPreviewComment(
   projectId: string,
   conversationId: string,
   comment: CollabCloudComment,
+  options: { stream?: string | undefined } = {},
 ): SyncedCommentMergeResult {
   if (comment.deleted) {
     return deleteSyncedPreviewComment(db, projectId, comment.id) ? 'changed' : 'unchanged';
@@ -4408,7 +4503,13 @@ export function mergeSyncedPreviewComment(
   const anchoredVersion = Number.isFinite(comment.anchoredVersion)
     ? Math.max(0, Math.round(comment.anchoredVersion as number))
     : null;
-  const updatedAt = Number.isFinite(comment.updatedAt) ? (comment.updatedAt as number) : now;
+  const createdAt = Number.isFinite(comment.createdAt) ? comment.createdAt : now;
+  // A missing `updatedAt` (share-page creates carry none) is NOT "now": that
+  // made a replayed create look newer than every later revision. The best
+  // business timestamp such a record has is its creation time.
+  const incomingUpdatedAt = Number.isFinite(comment.updatedAt) ? (comment.updatedAt as number) : null;
+  const revisionSeq = Number.isFinite(comment.seq) && comment.seq > 0 ? Math.round(comment.seq) : null;
+  const revisionStream = typeof options.stream === 'string' && options.stream ? options.stream : null;
   const authorKind = comment.authorKind === 'member' || comment.authorKind === 'user'
     ? comment.authorKind
     : undefined;
@@ -4427,16 +4528,37 @@ export function mergeSyncedPreviewComment(
   const existing = db
     .prepare(`SELECT updated_at AS updatedAt, label, author_key AS authorKey,
                      author_kind AS authorKind, author_member_id AS authorMemberId,
-                     author_app_user_id AS authorAppUserId
+                     author_app_user_id AS authorAppUserId,
+                     cloud_revision_seq AS cloudRevisionSeq,
+                     cloud_revision_stream AS cloudRevisionStream
                 FROM preview_comments WHERE id = ? AND project_id = ?`)
     .get(comment.id, projectId) as DbRow | undefined;
   const label = syncedCommentLabel(comment.label, existing?.label, comment.elementId);
   if (existing) {
-    // Last-writer-wins: only apply a strictly-newer edit. Keeps the existing
-    // row's conversation/created_at, refreshes mutable content/status/anchor
-    // state, and updates author fields only when the incoming wire payload
-    // explicitly carries each trusted field. Legacy payloads cannot erase them.
-    if (updatedAt <= Number(existing.updatedAt ?? 0)) {
+    // Keeps the existing row's conversation/created_at, refreshes mutable
+    // content/status/anchor state, and updates author fields only when the
+    // incoming wire payload explicitly carries each trusted field. Legacy
+    // payloads cannot erase them.
+    // A seq recorded under another stream (a renumbered member stream, the
+    // other relay scope) says nothing about this one: order by updatedAt.
+    const sameStream = (existing.cloudRevisionStream ?? null) === revisionStream;
+    const storedSeq = sameStream && Number.isFinite(existing.cloudRevisionSeq)
+      && Number(existing.cloudRevisionSeq) > 0
+      ? Number(existing.cloudRevisionSeq)
+      : null;
+    const storedUpdatedAt = Number(existing.updatedAt ?? 0);
+    const verdict = syncedCommentRevisionIsNewer(
+      { seq: revisionSeq, updatedAt: incomingUpdatedAt },
+      { seq: storedSeq, updatedAt: storedUpdatedAt },
+    );
+    if (verdict !== 'apply') {
+      // The row already reflects this revision or a later one. Still record
+      // the cloud position it has been proven to dominate, so a later replay
+      // of the same range short-circuits on seq alone.
+      if (revisionSeq !== null && (storedSeq === null || revisionSeq > storedSeq)) {
+        db.prepare(`UPDATE preview_comments SET cloud_revision_seq = ?, cloud_revision_stream = ?
+          WHERE id = ? AND project_id = ?`).run(revisionSeq, revisionStream, comment.id, projectId);
+      }
       // A server version may begin supplying its account-level avatar key
       // after an older daemon already stored this exact event. A replay is
       // metadata hydration, not a newer edit: never replace a known key or
@@ -4445,15 +4567,17 @@ export function mergeSyncedPreviewComment(
         && (authorKind === 'user'
           ? authorAppUserId === existing.authorAppUserId
           : authorMemberId === existing.authorMemberId);
-      if (updatedAt === Number(existing.updatedAt) && sameAuthor
-        && authorKey && !existing.authorKey) {
+      if (verdict === 'same-revision' && sameAuthor && authorKey && !existing.authorKey) {
         const hydrated = db.prepare(`UPDATE preview_comments SET author_key = ?
-          WHERE id = ? AND project_id = ? AND author_key IS NULL AND updated_at = ?`)
-          .run(authorKey, comment.id, projectId, updatedAt);
+          WHERE id = ? AND project_id = ? AND author_key IS NULL`)
+          .run(authorKey, comment.id, projectId);
         return hydrated.changes === 1 ? 'changed' : 'unchanged';
       }
       return 'unchanged';
     }
+    // An incoming revision without its own `updatedAt` takes its creation
+    // time, never the local clock (see incomingUpdatedAt above).
+    const updatedAt = incomingUpdatedAt ?? createdAt;
     const result = db.prepare(
       `UPDATE preview_comments SET
          selector = ?, label = ?, text = ?, position_json = ?, html_hint = ?,
@@ -4465,7 +4589,9 @@ export function mergeSyncedPreviewComment(
          author_app_user_id = CASE WHEN ? THEN ? ELSE author_app_user_id END,
          author_display_name = CASE WHEN ? THEN ? ELSE author_display_name END,
          author_key = CASE WHEN ? THEN ? ELSE author_key END,
-         updated_at = ?
+         updated_at = ?,
+         cloud_revision_seq = CASE WHEN ? THEN ? ELSE cloud_revision_seq END,
+         cloud_revision_stream = CASE WHEN ? THEN ? ELSE cloud_revision_stream END
        WHERE id = ? AND project_id = ?`,
     ).run(
       comment.selector,
@@ -4496,6 +4622,10 @@ export function mergeSyncedPreviewComment(
       authorKey !== undefined ? 1 : 0,
       authorKey ?? null,
       updatedAt,
+      revisionSeq !== null ? 1 : 0,
+      revisionSeq,
+      revisionSeq !== null ? 1 : 0,
+      revisionStream,
       comment.id,
       projectId,
     );
@@ -4516,19 +4646,10 @@ export function mergeSyncedPreviewComment(
   // reconciliation. Falls back to a local MAX+1 only for a comment that
   // somehow carries no real seq (e.g. an older relay build) so the row still
   // gets a usable number instead of a permanent NULL.
-  const createdAt = Number.isFinite(comment.createdAt) ? comment.createdAt : now;
   const hasWireSeq = Number.isFinite(comment.seq) && comment.seq > 0;
-  let pinSeq = hasWireSeq ? Math.round(comment.seq) : null;
-  if (!hasWireSeq) {
-    const pinScope = db
-      .prepare(
-        `SELECT COALESCE(MAX(pin_seq), 0) AS maxPinSeq
-           FROM preview_comments
-          WHERE project_id = ? AND file_path = ?`,
-      )
-      .get(projectId, comment.filePath) as DbRow;
-    pinSeq = Number(pinScope?.maxPinSeq ?? 0) + 1;
-  }
+  const pinSeq = hasWireSeq
+    ? distinctConfirmedPinSeq(db, projectId, comment.filePath, comment.id, Math.round(comment.seq))
+    : nextPinSeq(db, projectId, comment.filePath, comment.id);
   const result = db
     .prepare(
       `INSERT INTO preview_comments
@@ -4536,8 +4657,9 @@ export function mergeSyncedPreviewComment(
           text, position_json, html_hint, selection_kind, member_count, pod_members_json,
           style_json, attachments_json, slide_index, slide_key, note, status, created_at, updated_at,
           anchor_state, anchored_version, author_member_id, author_kind, author_app_user_id,
-          author_display_name, author_key, last_good_position_json, pin_seq, pin_seq_confirmed, sort_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          author_display_name, author_key, last_good_position_json, pin_seq, pin_seq_confirmed, sort_key,
+          cloud_revision_seq, cloud_revision_stream)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       comment.id,
@@ -4560,7 +4682,7 @@ export function mergeSyncedPreviewComment(
       typeof comment.note === 'string' ? comment.note : '',
       status,
       createdAt,
-      updatedAt,
+      incomingUpdatedAt ?? createdAt,
       anchorState,
       anchoredVersion,
       authorMemberId,
@@ -4572,6 +4694,8 @@ export function mergeSyncedPreviewComment(
       pinSeq,
       1,
       createdAt,
+      revisionSeq,
+      revisionSeq !== null ? revisionStream : null,
     );
   if (result.changes !== 1) throw new Error('Synced comment insert was not persisted');
   return 'changed';

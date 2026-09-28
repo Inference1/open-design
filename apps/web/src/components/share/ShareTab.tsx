@@ -126,6 +126,7 @@ export function ShareTab({
   setWorkspaceShareAccess,
   canPublishPublic,
   filePublished,
+  publishedLinkUnavailable = false,
   publishedFileUrl,
   copyPublishedFileLink,
   publishLinkFeedback,
@@ -163,6 +164,7 @@ export function ShareTab({
   setWorkspaceShareAccess: (nextAccess: 'private' | 'workspace') => void;
   canPublishPublic: boolean;
   filePublished: boolean;
+  publishedLinkUnavailable?: boolean;
   publishedFileUrl: string;
   copyPublishedFileLink: () => Promise<void>;
   publishLinkFeedback: 'copied' | 'failed' | null;
@@ -235,6 +237,9 @@ export function ShareTab({
     setOpen: setShareAccessMenuOpen,
   });
 
+  const showsTeamVisibilityNotice = !filePublished && !publishingPublicFile && !viewerOnly
+    && workspaceContext?.workspaceType === 'team' && shareAccess === 'private';
+
   // The host owns clipboard outcomes and their reset timer; only await its action here.
   async function handleCopyPublishedFileLink() {
     if (copyInFlight.current || streaming) return;
@@ -272,6 +277,11 @@ export function ShareTab({
                           else setPrepublishLinkAccess(value => !value);
                         }}
                       />
+                      {showsTeamVisibilityNotice ? (
+                        // Decision 67 #11: a public link registers a private team-workspace
+                        // project in the team catalog, so say so before the first publish.
+                        <p className={styles.publishHint} role="note">{t('fileViewer.publishMakesProjectTeamVisible')}</p>
+                      ) : null}
                       {publishFailureKey ? (
                         <ShareErrorRow message={t(publishFailureKey)} />
                       ) : planTooLarge && sharePlan ? (
@@ -308,6 +318,11 @@ export function ShareTab({
                         </div>
                         ) : (
                         <>
+                        {publishedLinkUnavailable ? (
+                          // Live publication without a Viewer address: no link to show or
+                          // copy, but the owner can still stop it with the switch above.
+                          <p className={styles.publishHint} role="status">{t('fileViewer.publicLinkUnavailable')}</p>
+                        ) : (
                         <SharePublishedLinkControls
                           url={publishedFileUrl}
                           copying={copyingLink}
@@ -317,6 +332,7 @@ export function ShareTab({
                           onCopy={() => { void handleCopyPublishedFileLink(); }}
                           t={t}
                         />
+                        )}
                         {!canMutatePublicShare && canResumeUpdateAfterLogin ? (
                           <ShareNoticeRow
                             message={t('fileViewer.shareOutdatedSignInHint')}

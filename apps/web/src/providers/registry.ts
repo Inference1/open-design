@@ -2,7 +2,6 @@ import {
   PUBLIC_FILE_MANUAL_REVOKE_REQUIRED,
   workspaceContextHasTeamIdentity,
   type PublicFileManualRevokeRequiredData,
-  type PublicProjectFilePublication,
   type ProjectFilePublicShareResponse,
   type ShareUnpublishResponse,
   type SharePublishRequest,
@@ -151,7 +150,51 @@ export type WebDeployProjectFileResponse = DeployProjectFileResponse;
 export type WebCloudflarePagesDeploySelection = CloudflarePagesDeploySelection;
 export type WebCloudflarePagesZonesResponse = CloudflarePagesZonesResponse;
 
-export type WebPublicProjectFileResponse = PublicProjectFilePublication;
+/**
+ * What the share surfaces need from a durable public-file publication.
+ * `url` is `null` when the daemon has no Viewer origin configured: the file
+ * is still published (and stoppable by `slug`), but there is no link to show.
+ * Consumers must not treat a null `url` as "not published", or the UI would
+ * offer Publish again and upload a duplicate.
+ */
+export interface WebPublicFileShareLink {
+  slug: string;
+  url: string | null;
+  /** Publish only: this publish made a private team-workspace project team-visible. */
+  madeTeamVisible?: true;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/** Normalize the POST publish-public body (`SharePublishResponse`). */
+function publicFileShareLinkFromPublish(payload: unknown): WebPublicFileShareLink {
+  const body = (payload && typeof payload === 'object' ? payload : {}) as {
+    receipt?: { slug?: unknown };
+    url?: unknown;
+    madeTeamVisible?: unknown;
+  };
+  const slug = nonEmptyString(body.receipt?.slug);
+  if (!slug) throw new Error('Publish response is missing its receipt slug');
+  return { slug, url: nonEmptyString(body.url), ...(body.madeTeamVisible === true ? { madeTeamVisible: true as const } : {}) };
+}
+
+/** Normalize the GET publish-public body (`ProjectFilePublicShareResponse`):
+ * a live publication with a URL, or one whose link is unavailable (slug only). */
+export function publicFileShareLinkFromRead(payload: unknown): WebPublicFileShareLink | null {
+  const body = (payload && typeof payload === 'object' ? payload : {}) as {
+    publication?: { url?: unknown; slug?: unknown } | null;
+    link?: { status?: unknown } | null;
+    slug?: unknown;
+  };
+  const publicationSlug = nonEmptyString(body.publication?.slug);
+  const publicationUrl = nonEmptyString(body.publication?.url);
+  if (publicationSlug && publicationUrl) return { slug: publicationSlug, url: publicationUrl };
+  const unavailableSlug = nonEmptyString(body.slug);
+  if (body.link?.status === 'unavailable' && unavailableSlug) return { slug: unavailableSlug, url: null };
+  return null;
+}
 
 export function isDeployProviderId(value: unknown): value is WebDeployProviderId {
   return typeof value === 'string' && (DEPLOY_PROVIDER_IDS as readonly string[]).includes(value);
@@ -1879,11 +1922,11 @@ function parsePublicFileManualRevokeData(
   const data = value as Partial<Record<keyof PublicFileManualRevokeRequiredData, unknown>>;
   if (
     typeof data.projectId !== 'string'
-    || typeof data.url !== 'string'
+    // No Viewer origin configured: the live publication has no URL, only a slug.
+    || (data.url !== null && (typeof data.url !== 'string' || !data.url))
     || typeof data.slug !== 'string'
     || typeof data.fileName !== 'string'
     || !data.projectId
-    || !data.url
     || !data.slug
     || !data.fileName
   ) {
@@ -1891,7 +1934,7 @@ function parsePublicFileManualRevokeData(
   }
   return {
     projectId: data.projectId,
-    url: data.url,
+    url: typeof data.url === 'string' ? data.url : null,
     slug: data.slug,
     fileName: data.fileName,
   };
@@ -1903,7 +1946,7 @@ export async function publishProjectFilePublic(
   workspaceContext?: WorkspaceCollabContext | null,
   requestId?: string,
   mode?: SharePublishRequest['mode'],
-): Promise<WebPublicProjectFileResponse> {
+): Promise<WebPublicFileShareLink> {
   // Carry the active workspace identity so the daemon's `canShareProjectsForRequest`
   // gate (apps/daemon/src/routes/collab-sync.ts) reads the real permission bit
   // instead of falling back to a headerless context read — see
@@ -1963,7 +2006,7 @@ export async function publishProjectFilePublic(
       { failure: payload?.failure, daemonErrorCode: code },
     );
   }
-  return (await resp.json()) as WebPublicProjectFileResponse;
+  return publicFileShareLinkFromPublish(await resp.json());
 }
 
 export async function fetchProjectFileSharePlan(projectId: string, fileName: string, workspaceContext?: WorkspaceCollabContext | null) {
@@ -2001,9 +2044,9 @@ export async function fetchProjectFilePublicPublication(
   projectId: string,
   fileName: string,
   workspaceContext?: WorkspaceCollabContext | null,
-): Promise<WebPublicProjectFileResponse | null> {
+): Promise<WebPublicFileShareLink | null> {
   const state = await fetchProjectFilePublicShareState(projectId, fileName, workspaceContext);
-  return state.publication;
+  return publicFileShareLinkFromRead(state);
 }
 
 export async function unpublishProjectFilePublic(
@@ -2852,6 +2895,15 @@ export async function restoreProjectFileVersion(
   }
 }
 
+/**
+ * Deadline for the remote half of an explicit comment pull. The web runs one
+ * comment-list read at a time, so a daemon pull that stalls (a slow CLI
+ * transport, a long member drain) must not hold every later refresh; past the
+ * deadline the read falls back to the local list, which the daemon keeps
+ * filling and announces with `comment-changed`.
+ */
+export const COMMENT_PULL_TIMEOUT_MS = 15_000;
+
 export async function fetchPreviewComments(
   projectId: string,
   conversationId: string,
@@ -2861,14 +2913,19 @@ export async function fetchPreviewComments(
   const url = `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/comments`;
   const headers = workspaceContext ? workspaceProjectHeaders(workspaceContext) : undefined;
   if (pullRemote && workspaceContext) {
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), COMMENT_PULL_TIMEOUT_MS);
     try {
-      const remote = await fetch(`${url}/pull`, { method: 'POST', headers });
+      const remote = await fetch(`${url}/pull`, { method: 'POST', headers, signal: controller.signal });
       if (remote.ok) {
         const result = (await remote.json()) as import('@open-design/contracts').ProjectCommentPullResponse;
         return result.comments;
       }
     } catch {
-      // The existing local list stays usable when remote sync is unavailable.
+      // The existing local list stays usable when remote sync is unavailable
+      // or slower than its deadline.
+    } finally {
+      clearTimeout(deadline);
     }
   }
   try {

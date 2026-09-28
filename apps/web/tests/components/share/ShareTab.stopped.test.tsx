@@ -154,7 +154,7 @@ it('S9-R: a stopped-link switch requests resume-only, locks while pending, then 
   fireEvent.click(toggle);
   expect(publicationRequests('POST')).toHaveLength(1);
   publications = [{ sourceFilePath: 'page.html', slug: 'stable', status: 'active' }];
-  await act(async () => pending.resolve(Response.json({ url: publicUrl, slug: 'stable', fileName: 'page.html' })));
+  await act(async () => pending.resolve(Response.json({ status: 'published', receipt: { filePath: 'page.html', slug: 'stable', publishedAt: 1, version: 1, versionId: 'v1' }, url: publicUrl })));
   expect(await screen.findByText(publicUrl)).toBeVisible();
   expect(toggle).toHaveAttribute('aria-checked', 'true');
 });
@@ -166,7 +166,7 @@ it('S9-R clears a last-known URL after authoritative remote stop and offers resu
     const url = String(input);
     if (url.endsWith('/share-state')) return Response.json({ projectId: 'project', bindingExists: true, hasEverShared: true, publications });
     if (url.includes('publish-public')) {
-      if (options?.method === 'POST') return Response.json({ url: publicUrl, slug: 'stable', fileName: 'page.html' });
+      if (options?.method === 'POST') return Response.json({ status: 'published', receipt: { filePath: 'page.html', slug: 'stable', publishedAt: 1, version: 1, versionId: 'v1' }, url: publicUrl });
       return Response.json({ publication: remoteStopped ? null : currentPublication, status: remoteStopped ? 'stopped' : 'active' });
     }
     return Response.json({ deployments: [] });

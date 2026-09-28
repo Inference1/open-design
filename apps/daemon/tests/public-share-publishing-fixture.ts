@@ -4,13 +4,18 @@ import { createShareAliasReservations } from '../src/collab/share-alias-reservat
 import { createShareBindingOutbox } from '../src/collab/share-binding-outbox.js';
 import { createSharePublicationCompletion } from '../src/collab/share-publication-completion.js';
 import { createPublicFilePublicationRecorder } from '../src/collab/public-file-publication-recording.js';
-import { resolvePublicShareViewerUrl } from '../src/collab/public-share-viewer-url.js';
+import { resolvePublicShareLink } from '../src/collab/public-share-viewer-url.js';
+import { parseProjectShareState } from '../src/collab/vela-project-share-state.js';
 import { publicFileResourceIdFor } from '../src/collab/public-file-resource-id.js';
 import type { PublicFilePublicationStore } from '../src/collab/public-file-publication-store.js';
 import type { RegisterCollabSyncRoutesDeps } from '../src/routes/collab-sync.js';
 
 export type FixtureShareCloud = Map<string, { projectId: string; sourceFilePath: string; slug: string; status: 'active' | 'stopped' }>;
 export const fixtureShareSlug = 'a863b8d7-cc55-465a-a359-435bd3ef4919';
+/** What the synthetic `vela share … --json` adds to an ACTIVE binding: AMR's
+ * `url`, or `link: {status:'unavailable', code}` (AA5 shapes). Stopped
+ * bindings carry neither, exactly like the real CLI. */
+export type FixtureAmrShareFields = (projectId: string, slug: string) => Record<string, unknown>;
 /** Real local publish pipeline. Only the CLI transport is synthetic. The Web
  * origin is explicit fixture configuration, never an ambient/prod fallback. */
 export function createPublicSharePublishingFixture(
@@ -18,15 +23,21 @@ export function createPublicSharePublishingFixture(
   store: PublicFilePublicationStore,
   resource: (args: string[], workspace: string) => Promise<string>,
   enqueue: Parameters<typeof createPublicFilePublicationRecorder>[2] = () => ({ enqueued: 0, skippedInbound: 0 }),
-  options: { env?: NodeJS.ProcessEnv; configuredEnv?: Record<string, string>; pending?: boolean; failUpload?: boolean; failStop?: boolean; failResume?: boolean; failResumeAfterActivation?: boolean; failComplete?: boolean; beforeStop?: () => Promise<void>; commands?: string[][]; cloud?: FixtureShareCloud } = {},
-): Pick<RegisterCollabSyncRoutesDeps, 'sharePublishing' | 'readProjectShareState'> {
+  options: { env?: NodeJS.ProcessEnv; configuredEnv?: Record<string, string>; amr?: FixtureAmrShareFields; failShareState?: () => boolean; pending?: boolean; failUpload?: boolean; failStop?: boolean; failResume?: boolean; failResumeAfterActivation?: boolean; failComplete?: boolean; beforeStop?: () => Promise<void>; commands?: string[][]; cloud?: FixtureShareCloud } = {},
+): Pick<RegisterCollabSyncRoutesDeps, 'sharePublishing' | 'readProjectShareState' | 'resolvePublicShareLink'> {
   const outbox = createShareBindingOutbox(db);
   let ids = 0;
   const cloud: FixtureShareCloud = options.cloud ?? new Map();
   let lastReceipt: { slug: string; version: number; versionId: string; publishedAt: number; entryPath: string } | null = null;
-  return { readProjectShareState: async scope => {
-    const publications = [...cloud.values()].filter(item => item.projectId === scope.projectId).map(({ projectId: _projectId, ...item }) => item);
-    return { projectId: scope.projectId, bindingExists: publications.length > 0, hasEverShared: publications.length > 0, publications };
+  const viewerEnv = options.env ?? { OD_SHARE_VIEWER_URL: 'https://viewer.example.test' };
+  const amrFields = (projectId: string, slug: string) => options.amr?.(projectId, slug) ?? {};
+  // Publish and read share one resolver, as in server.ts.
+  return { resolvePublicShareLink: (projectId, slug, amr) => resolvePublicShareLink(projectId, slug, amr, viewerEnv, options.configuredEnv), readProjectShareState: async scope => {
+    if (options.failShareState?.()) throw new Error('SHARE_STATE_UNAVAILABLE');
+    const publications = [...cloud.values()].filter(item => item.projectId === scope.projectId).map(({ projectId, ...item }) =>
+      ({ ...item, ...(item.status === 'active' ? amrFields(projectId, item.slug) : {}) }));
+    // The raw `vela share project-status --json` body, through the real parser.
+    return parseProjectShareState(JSON.stringify({ projectId: scope.projectId, bindingExists: publications.length > 0, publications }), scope.projectId);
   }, sharePublishing: {
     reservations: createShareAliasReservations(db, () => ids++ === 0 ? fixtureShareSlug : randomUUID()),
     outbox,
@@ -35,7 +46,6 @@ export function createPublicSharePublishingFixture(
       return createSharePublicationCompletion(db, createPublicFilePublicationRecorder(db, store, enqueue), outbox, true)(input);
     },
     prepare: async (scope, slug) => ({
-      url: resolvePublicShareViewerUrl(scope.projectId, slug, options.env ?? { OD_VELA_WEB_URL: 'https://viewer.example.test/cloud' }, options.configuredEnv),
       run: async args => {
         options.commands?.push([...args]);
         if (args[0] === 'resource') {
@@ -57,13 +67,13 @@ export function createPublicSharePublishingFixture(
           cloud.set(scope.projectId + ':' + scope.filePath, { ...prior, status: 'active' });
           if (options.failResumeAfterActivation) throw new Error('resume response lost after alias activation');
           return JSON.stringify({ status: 'active', projectId: scope.projectId,
-            resourceId: publicFileResourceIdFor(scope), ...lastReceipt });
+            resourceId: publicFileResourceIdFor(scope), ...lastReceipt, ...amrFields(scope.projectId, lastReceipt.slug) });
         }
         if (args[1] === 'bind' || args[1] === 'resume') {
           if (args[1] === 'resume' && options.failResume) throw new Error('resume unavailable');
           if (args[1] === 'bind' && cloud.get(scope.projectId + ':' + scope.filePath)?.status === 'stopped') throw new Error('SHARE_BINDING_STOPPED');
           cloud.set(scope.projectId + ':' + scope.filePath, { projectId: scope.projectId, sourceFilePath: scope.filePath, slug, status: 'active' });
-          return JSON.stringify({ status: 'active', projectId: scope.projectId, slug,
+          return JSON.stringify({ status: 'active', projectId: scope.projectId, slug, ...amrFields(scope.projectId, slug),
             verifiedVersion: Number(args[args.indexOf('--version') + 1]), verifiedVersionId: args[args.indexOf('--version-id') + 1] });
         }
         if (args[1] !== 'publish') throw new Error('unexpected share operation');
@@ -74,7 +84,8 @@ export function createPublicSharePublishingFixture(
         lastReceipt = receipt;
         const pending = options.pending || cloud.get(scope.projectId + ':' + scope.filePath)?.status === 'stopped';
         if (!pending) cloud.set(scope.projectId + ':' + scope.filePath, { projectId: scope.projectId, sourceFilePath: scope.filePath, slug, status: 'active' });
-        return JSON.stringify({ status: pending ? 'binding_pending' : 'published', ...receipt, receipt, snapshot: { versionId }, ...(pending ? { binding: { code: 'SHARE_BINDING_UNAVAILABLE' } } : {}) });
+        return JSON.stringify({ status: pending ? 'binding_pending' : 'published', ...receipt, receipt, snapshot: { versionId },
+          ...(pending ? { binding: { code: 'SHARE_BINDING_UNAVAILABLE' } } : amrFields(scope.projectId, slug)) });
       },
     }),
     retry: () => {},

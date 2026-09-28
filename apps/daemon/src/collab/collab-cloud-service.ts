@@ -18,8 +18,14 @@ import type {
 import {
 	CollabCloudError,
 	type CollabCloudClient,
+	type CollabCloudMemberRebuildCode,
 } from "../integrations/collab-cloud.js";
 import type { SyncedCommentMergeResult } from "../db.js";
+import {
+	nextMemberPageQuery,
+	type CommentInboundStore,
+	type MemberSyncScope,
+} from "./comment-inbound-store.js";
 import type { WorkspaceContextProvider } from "./workspace-context.js";
 import type { CommentRelayScope } from "./comment-relay-scope.js";
 import type {
@@ -56,6 +62,14 @@ export interface CollabCloudServiceDeps {
 	) => Promise<WorkspaceCollabContext | null>;
 	/** Cheap local binding witness applied per queued record in a batch. */
 	validateCommentRelayProjectBinding?: (
+		record: CommentRelayOutboxRecord,
+	) => boolean;
+	/**
+	 * True when a personal record failed that witness only because its creator's
+	 * project became team-visible (a public link in a team workspace). Such a
+	 * record is re-queued as Team relay instead of being cancelled.
+	 */
+	isCommentRelayRecordPromotedToTeam?: (
 		record: CommentRelayOutboxRecord,
 	) => boolean;
 	/** Separate creator-scoped eligibility for active public personal projects. */
@@ -138,7 +152,40 @@ export interface CollabCloudServiceDeps {
 		projectId: string;
 		conversationId: string;
 		comment: CollabCloudComment;
+		/**
+		 * The seq space `comment.seq` belongs to (relay team + stream). Seqs are
+		 * only comparable within one stream: a rebuilt member stream renumbers,
+		 * and a personal and a team relay count independently.
+		 */
+		stream?: string;
 	}) => SyncedCommentMergeResult;
+	/**
+	 * Durable C3-LITE member-page cursor + atomic page commit. When present, a
+	 * team project's MEMBER comments arrive through bounded pages (snapshot,
+	 * then incremental rounds) instead of the legacy unbounded pull. Share-page
+	 * (user) comments still come from the legacy pull until public paging (BA2)
+	 * exists. Omitted → legacy pull only, exactly as before.
+	 */
+	memberCommentStore?: CommentInboundStore;
+	/**
+	 * Local binding witness for member paging: false once this project is no
+	 * longer team-shared here (stop sharing flips visibility inside the same
+	 * workspace, so the workspace context alone cannot see it). False drops the
+	 * project's member cursors/ledgers and refuses in-flight pages. Omitted →
+	 * the workspace context is the only witness.
+	 */
+	isMemberSyncProjectShared?: (projectId: string) => boolean;
+	/**
+	 * The stored member cursor was unusable (C3-LITE §4 `INVALID_CURSOR`,
+	 * `CURSOR_STALE`, `SCOPE_CHANGED`, or a page whose scope token no longer
+	 * matches the stored round) and a rebuild is starting: the cursor has been
+	 * reset and the same drain continues with a fresh snapshot. Diagnostic only.
+	 */
+	onMemberSyncRebuildRequired?: (input: {
+		projectId: string;
+		scope: MemberSyncScope;
+		code: "INVALID_CURSOR" | "CURSOR_STALE" | "SCOPE_CHANGED";
+	}) => void;
 	/** Poll cadence; defaults to the spec's foreground 5s (§D4.5). */
 	pollIntervalMs?: number;
 	/** Durable outbound Team-comment queue. Omitted by isolated/local callers. */
@@ -153,12 +200,68 @@ export interface CollabCloudServiceDeps {
 	}) => void;
 	now?: () => number;
 	retryDelayMs?: (attemptCount: number) => number;
+	/**
+	 * Delay before the member page route is tried again after `failures`
+	 * consecutive failed drains of one scope (a programming error such as
+	 * `INVALID_PAGE_REQUEST` counts one extra). Defaults to
+	 * `memberPageRetryDelayMs`.
+	 */
+	memberPageRetryDelayMs?: (failures: number) => number;
 	onError?: (error: unknown) => void;
+	/**
+	 * At most once per pull round (member page drain + legacy pull), with the
+	 * number of committed rows that round changed. A trailing rerun is its own
+	 * round.
+	 */
 	onMerged?: (input: { projectId: string; inserted: number }) => void;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
+/**
+ * Upper bound on pages one drain requests. The cursor is durable, so stopping
+ * here loses nothing: the next wake continues from the last committed page.
+ * It only keeps a misbehaving server from pinning a drain forever.
+ */
+const MAX_MEMBER_PAGES_PER_DRAIN = 200;
 const COMMENT_OUTBOX_PUSH_CONCURRENCY = 4;
+
+/** ~10 min of relay backoff: far longer than the background catalog reconcile. */
+const AWAIT_TEAM_VISIBILITY_MAX_ATTEMPTS = 24;
+const MEMBER_PAGE_RETRY_BASE_MS = 10_000;
+const MEMBER_PAGE_RETRY_MAX_MS = 5 * 60_000;
+
+/**
+ * Bounded exponential backoff for the member page route. One transient
+ * failure is retried on the next poll (0); from the second consecutive failure
+ * the delay is 10s, 20s, 40s … capped at 5 minutes. The legacy pull keeps
+ * carrying member comments while paging is backed off.
+ */
+export function memberPageRetryDelayMs(failures: number): number {
+	const exponent = failures - 1;
+	if (exponent <= 0) return 0;
+	return Math.min(
+		MEMBER_PAGE_RETRY_MAX_MS,
+		MEMBER_PAGE_RETRY_BASE_MS * 2 ** Math.min(exponent - 1, 20),
+	);
+}
+
+/** A failure that retrying the same request cannot fix (see backoff weight). */
+function isPermanentMemberPageError(error: unknown): boolean {
+	return (
+		error instanceof MemberRebuildRefusedError ||
+		(error instanceof CollabCloudError && error.code === "INVALID_PAGE_REQUEST")
+	);
+}
+
+/** A rebuild snapshot was itself refused, or a drain needed a second rebuild. */
+class MemberRebuildRefusedError extends Error {
+	constructor(projectId: string, code: string) {
+		super(
+			`Member comment rebuild for project ${projectId} was refused (${code})`,
+		);
+		this.name = "MemberRebuildRefusedError";
+	}
+}
 
 /**
  * Map a locally-stored preview comment to the cloud sync unit. Carries the full
@@ -314,7 +417,20 @@ export function createCollabCloudService(
 	// and a 304 costs nothing.
 	const cursors = new Map<string, number>();
 	const etags = new Map<string, string | null>();
-	const inFlightPulls = new Map<string, Promise<boolean>>();
+	const inFlightPulls = new Map<
+		string,
+		{ promise: Promise<boolean>; rerun: boolean }
+	>();
+	// The member scope currently syncing each project. A drain whose scope is
+	// no longer this one (account switch, stop sharing) must not commit.
+	const activeMemberScope = new Map<string, string>();
+	// Consecutive failed drains per member scope, and when paging may retry.
+	const memberBackoff = new Map<string, { failures: number; until: number }>();
+	const memberRetryDelay =
+		deps.memberPageRetryDelayMs ?? memberPageRetryDelayMs;
+	// Legacy cursor keys whose pulls skipped member records because paging
+	// covered them. If paging stops covering them, that cursor is reset.
+	const legacyMemberFilteredKeys = new Set<string>();
 	let timer: NodeJS.Timeout | null = null;
 	let running = false;
 	let outboxRunning = false;
@@ -742,7 +858,14 @@ export function createCollabCloudService(
 			for (const record of records) {
 				if (deps.validateCommentRelayProjectBinding(record))
 					eligible.push(record);
-				else {
+				else if (
+					deps.isCommentRelayRecordPromotedToTeam?.(record) &&
+					deps.commentOutbox?.rescopeToTeam?.(record)
+				) {
+					// Same comment, same readers, new relay path: deliver it in this
+					// drain's follow-up pass rather than dropping it.
+					outboxRerunRequested = true;
+				} else {
 					// A local unshare/delete/re-home is authoritative and cannot become
 					// valid again for this queued revision. Cancel it even if the remote
 					// catalog still carries a briefly-stale row.
@@ -787,7 +910,24 @@ export function createCollabCloudService(
 			const deliverable: CommentRelayOutboxRecord[] = [];
 			for (const record of eligible) {
 				if (relayIdentityMatches(context, record)) deliverable.push(record);
-				else {
+				else if (
+					context.workspaceType === "team" &&
+					record.attemptCount < AWAIT_TEAM_VISIBILITY_MAX_ATTEMPTS &&
+					deps.commentOutbox?.isPublicationCurrent?.(record) === true
+				) {
+					// The binding witness above still holds and the exact publication is
+					// still current: this is a creator's private project in a team
+					// workspace that has not been marked team-visible yet. That is a
+					// transient state (publishing registered it in the team catalog),
+					// not a stop, so retry with backoff; once the row turns `team` the
+					// record is re-queued as Team relay, and a stop cancels it. Bounded:
+					// a row the catalog reconcile never promotes (demoted, moved back to
+					// private) is cancelled as before instead of retrying forever.
+					deferOutboxRecord(
+						record,
+						new Error("comment relay awaiting team visibility"),
+					);
+				} else {
 					// Fresh workspace authority is already proven for this identity
 					// batch. A failed exact-file scope check therefore means the local
 					// durable publication witness was removed (or its creator binding
@@ -916,19 +1056,352 @@ export function createCollabCloudService(
 		return members.find((m) => m.memberId === memberId) ?? null;
 	}
 
-	/** Resolves `true` when a pull ran (even if it returned nothing new),
-	 *  `false` when there was no local conversation to merge into. */
+	/**
+	 * - `drained`: an incremental round completed; paging owns member comments.
+	 * - `paused`: stopped early (page cap, CAS conflict); resume next wake.
+	 * - `backoff`: paging is backing off after failures; nothing was requested.
+	 * - `scope-lost`: while a page was in flight the scope stopped being this
+	 *   project's current one, or could not be re-verified; the page was
+	 *   discarded uncommitted (the cursor is dropped only on a proven change).
+	 */
+	type MemberDrainOutcome = "drained" | "paused" | "backoff" | "scope-lost";
+
+	/** Committed, changed rows of one pull round, summed into one notification. */
+	type MergeRound = { changed: number };
+
+	const memberScopeKey = (scope: MemberSyncScope) =>
+		JSON.stringify([
+			scope.workspaceId,
+			scope.memberId,
+			scope.teamId,
+			scope.projectId,
+		]);
+
+	/**
+	 * Stop member paging for a project whose bound context is positively no
+	 * longer a team member scope (stop sharing, removed from the team, account
+	 * switched to a personal workspace). Cursors and ledgers go; the local
+	 * comment rows stay as local copies and simply stop syncing.
+	 */
+	function forgetMemberSync(projectId: string, keep?: MemberSyncScope): void {
+		const store = deps.memberCommentStore;
+		if (!store) return;
+		const keepKey = keep ? memberScopeKey(keep) : null;
+		if (keepKey) activeMemberScope.set(projectId, keepKey);
+		else activeMemberScope.delete(projectId);
+		for (const key of memberBackoff.keys()) {
+			if (key !== keepKey && (JSON.parse(key) as string[])[3] === projectId)
+				memberBackoff.delete(key);
+		}
+		store.forgetProject(projectId, keep);
+	}
+
+	/**
+	 * Is `scope` still the one to commit for? Checked after every awaited page,
+	 * immediately before its synchronous commit, so no scope change that was
+	 * visible by then can let an old scope's page land.
+	 */
+	async function memberScopeStillCurrent(
+		scope: MemberSyncScope,
+		key: string,
+		{ claimed = true }: { claimed?: boolean } = {},
+	): Promise<"current" | "lost" | "unknown"> {
+		const superseded = () =>
+			claimed && activeMemberScope.get(scope.projectId) !== key;
+		if (superseded()) return "lost";
+		if (
+			deps.isMemberSyncProjectShared &&
+			!deps.isMemberSyncProjectShared(scope.projectId)
+		) {
+			forgetMemberSync(scope.projectId);
+			return "lost";
+		}
+		if (!deps.resolveProjectWorkspaceContext) return "current";
+		const context = await deps.resolveProjectWorkspaceContext(scope.projectId);
+		if (superseded()) return "lost";
+		if (
+			deps.isMemberSyncProjectShared &&
+			!deps.isMemberSyncProjectShared(scope.projectId)
+		) {
+			forgetMemberSync(scope.projectId);
+			return "lost";
+		}
+		// No answer is not a scope change: discard this page, keep the cursor.
+		if (!context) return "unknown";
+		const team = explicitTeamIdentity(context);
+		if (
+			!team ||
+			context.workspaceId !== scope.workspaceId ||
+			team.memberId !== scope.memberId ||
+			team.teamId !== scope.teamId
+		) {
+			forgetMemberSync(
+				scope.projectId,
+				team
+					? {
+							workspaceId: context.workspaceId,
+							memberId: team.memberId,
+							teamId: team.teamId,
+							projectId: scope.projectId,
+						}
+					: undefined,
+			);
+			return "lost";
+		}
+		return "current";
+	}
+
+	/**
+	 * Drain the member page stream for one team project until the cloud reports
+	 * an incremental round complete (C3-LITE §3):
+	 *
+	 * - Every request is derived from the durable cursor, and a page advances
+	 *   that cursor only inside the same SQLite transaction that applies it. A
+	 *   throw anywhere leaves the cursor on the last fully committed page.
+	 * - `comments: []` with `hasMore: true` is an ordinary page: keep going.
+	 * - A terminal snapshot page hands off to incremental; the drain then runs
+	 *   that first incremental round too, so writes committed while the
+	 *   snapshot was being read are not left for the next wake.
+	 * - An unusable cursor is reset and rebuilt from a fresh snapshot in the
+	 *   same drain. The snapshot's completion prunes rows the stream no longer
+	 *   has (see comment-inbound-store). A refused fresh snapshot, or a second
+	 *   rebuild in one drain, is an error and backs off instead of looping.
+	 * - Rows count toward the round's merge notification only after their page
+	 *   commits and only when they actually changed, so a replayed page adds
+	 *   nothing. The caller emits once per round (see `pollProject`).
+	 */
+	async function drainMemberPages(
+		store: CommentInboundStore,
+		identity: PullIdentity,
+		context: WorkspaceCollabContext,
+		projectId: string,
+		conversationId: string,
+		round: MergeRound,
+	): Promise<MemberDrainOutcome> {
+		const scope: MemberSyncScope = {
+			workspaceId: context.workspaceId,
+			memberId: identity.memberId,
+			teamId: identity.teamId,
+			projectId,
+		};
+		const key = memberScopeKey(scope);
+		if (
+			deps.isMemberSyncProjectShared &&
+			!deps.isMemberSyncProjectShared(projectId)
+		) {
+			forgetMemberSync(projectId);
+			return "scope-lost";
+		}
+		if (activeMemberScope.get(projectId) !== key) {
+			// Prove this caller's scope is the project's current one BEFORE taking
+			// the project over: a stale caller (a rerun or wake carrying the old
+			// account's context) must not wipe the current scope's cursor.
+			if (
+				(await memberScopeStillCurrent(scope, key, { claimed: false })) !==
+				"current"
+			)
+				return "scope-lost";
+			// A new scope takes the project over: any older scope's in-flight page
+			// is now refused, and its cursor/ledger are dropped (local rows stay).
+			if (activeMemberScope.get(projectId) !== key)
+				forgetMemberSync(projectId, scope);
+		}
+		const backoff = memberBackoff.get(key);
+		if (backoff && now() < backoff.until) return "backoff";
+		try {
+			const outcome = await drainMemberScope(
+				store,
+				scope,
+				key,
+				projectId,
+				conversationId,
+				round,
+			);
+			if (outcome === "drained") memberBackoff.delete(key);
+			return outcome;
+		} catch (error) {
+			const failures = (memberBackoff.get(key)?.failures ?? 0) + 1;
+			const weighted = failures + (isPermanentMemberPageError(error) ? 1 : 0);
+			memberBackoff.set(key, {
+				failures,
+				until: now() + memberRetryDelay(weighted),
+			});
+			throw error;
+		}
+	}
+
+	async function drainMemberScope(
+		store: CommentInboundStore,
+		scope: MemberSyncScope,
+		key: string,
+		projectId: string,
+		conversationId: string,
+		round: MergeRound,
+	): Promise<MemberDrainOutcome> {
+		let rebuilt = false;
+		const rebuild = (
+			code: CollabCloudMemberRebuildCode,
+			freshSnapshot: boolean,
+		): void => {
+			if (freshSnapshot || rebuilt)
+				throw new MemberRebuildRefusedError(projectId, code);
+			rebuilt = true;
+			store.reset(scope);
+			deps.onMemberSyncRebuildRequired?.({ projectId, scope, code });
+		};
+		for (let pages = 0; pages < MAX_MEMBER_PAGES_PER_DRAIN; pages += 1) {
+			const query = nextMemberPageQuery(store.read(scope));
+			const freshSnapshot =
+				query.mode === "snapshot" && query.pageToken === undefined;
+			const result = await deps.client.pullMemberPage(
+				scope.teamId,
+				projectId,
+				query,
+			);
+			const standing = await memberScopeStillCurrent(scope, key);
+			if (standing !== "current") return "scope-lost";
+			if (result.kind === "rebuild-required") {
+				rebuild(result.code, freshSnapshot);
+				continue;
+			}
+			const { page } = result;
+			if (page.hasMore && page.nextPageToken === query.pageToken) {
+				throw new Error("Member page did not advance its cursor");
+			}
+			const applied = store.apply({
+				scope,
+				query,
+				page,
+				merge: (comment) =>
+					deps.mergeComment({
+						projectId,
+						conversationId,
+						comment,
+						stream: `member:${scope.teamId}:${page.streamEpoch}`,
+					}),
+			});
+			if (applied.status === "rebuild-required") {
+				rebuild("SCOPE_CHANGED", freshSnapshot);
+				continue;
+			}
+			// Another writer moved this cursor; the trailing rerun (or next wake)
+			// continues from wherever it now stands.
+			if (applied.status === "conflict") return "paused";
+			if (page.skipped.length > 0) {
+				deps.onError?.(
+					new Error(
+						`Skipped ${page.skipped.length} malformed member comment(s) for project ${projectId}: ` +
+							page.skipped
+								.map(
+									(item) =>
+										`${item.id ?? `#${item.index}`}@${item.seq ?? "?"} (${item.reason})`,
+								)
+								.join(", "),
+					),
+				);
+			}
+			round.changed += applied.changed + applied.deleted + applied.pruned;
+			if (!page.hasMore && page.mode === "incremental") return "drained";
+		}
+		return "paused";
+	}
+
+	/**
+	 * One pull round: the member page drain plus the legacy pull. Every row the
+	 * round commits is counted into one `onMerged` notification, emitted when
+	 * the round settles — also when it ends early or throws, because rows that
+	 * already committed are in local storage either way. A 3-page drain is one
+	 * web refetch, not three.
+	 */
 	async function pollProject(
 		identity: PullIdentity,
 		scopeKey: string,
 		projectId: string,
 		requestContext: WorkspaceCollabContext,
 	): Promise<boolean> {
+		const round: MergeRound = { changed: 0 };
+		try {
+			return await pollProjectRound(
+				identity,
+				scopeKey,
+				projectId,
+				requestContext,
+				round,
+			);
+		} finally {
+			// A failing listener must neither mask the round's own error nor turn a
+			// successful round into an unredeemed wake.
+			if (round.changed > 0) {
+				try {
+					deps.onMerged?.({ projectId, inserted: round.changed });
+				} catch (error) {
+					deps.onError?.(error);
+				}
+			}
+		}
+	}
+
+	/** Resolves `true` when a pull ran (even if it returned nothing new),
+	 *  `false` when there was no local conversation to merge into, or when the
+	 *  member page drain failed or paused early (its wake is not redeemed). */
+	async function pollProjectRound(
+		identity: PullIdentity,
+		scopeKey: string,
+		projectId: string,
+		requestContext: WorkspaceCollabContext,
+		round: MergeRound,
+	): Promise<boolean> {
 		const conversationId = deps.resolveLocalConversationId(projectId);
 		// No local conversation to attach to yet (e.g. a member who pulled the
 		// project but has not opened a chat) — nothing to merge into.
 		if (!conversationId) return false;
+		// Member comments of a team project: bounded pages first. The legacy pull
+		// below then carries only what paging does not cover yet (share-page user
+		// comments, BA2), unless the member cursor needs a rebuild — in that case
+		// the legacy pull keeps delivering member comments too, so nothing
+		// regresses while BO2's rebuild is pending.
+		//
+		// Member records are left to paging only after a drain reached the end of
+		// an incremental round. A failed, paused or rebuild-required drain keeps
+		// the legacy pull carrying them (LWW merges make the overlap harmless), so
+		// a server or CLI without paged mode can never silence member comments.
+		let memberDrainIncomplete = false;
+		let legacyCarriesMembers = true;
+		const memberStore =
+			identity.relayScope === "team" ? deps.memberCommentStore : undefined;
+		if (!memberStore) forgetMemberSync(projectId);
+		if (memberStore) {
+			try {
+				const outcome = await drainMemberPages(
+					memberStore,
+					identity,
+					requestContext,
+					projectId,
+					conversationId,
+					round,
+				);
+				// This pull's identity is no longer (or not provably) the project's
+				// scope: its legacy reply must not be merged either.
+				if (outcome === "scope-lost") return false;
+				legacyCarriesMembers = outcome !== "drained";
+				memberDrainIncomplete = outcome === "paused" || outcome === "backoff";
+			} catch (error) {
+				memberDrainIncomplete = true;
+				deps.onError?.(error);
+			}
+		}
 		const requestCursorKey = pullCursorKey(scopeKey, projectId, identity);
+		if (
+			legacyCarriesMembers &&
+			legacyMemberFilteredKeys.delete(requestCursorKey)
+		) {
+			// Earlier legacy pulls moved past member records paging then owned.
+			// Paging no longer covers them, so replay the legacy stream from zero.
+			cursors.delete(requestCursorKey);
+			etags.delete(requestCursorKey);
+		} else if (!legacyCarriesMembers) {
+			legacyMemberFilteredKeys.add(requestCursorKey);
+		}
 		const sinceSeq = cursors.get(requestCursorKey) ?? 0;
 		const result = await deps.client.pullComments(
 			identity.teamId,
@@ -972,11 +1445,22 @@ export function createCollabCloudService(
 		if (result.notModified) {
 			if (responseCursorKey === requestCursorKey)
 				etags.set(responseCursorKey, result.etag);
-			return true;
+			return !memberDrainIncomplete;
 		}
-		let inserted = 0;
 		for (const incoming of comments) {
 			let comment = incoming;
+			// Member records (including their tombstones, which the member stream
+			// also carries) are owned by the paged drain. A legacy tombstone carries
+			// no author kind, so only one whose stored target is a share-page
+			// comment is still applied here.
+			if (!legacyCarriesMembers) {
+				if (!incoming.deleted && incoming.authorKind !== "user") continue;
+				if (
+					incoming.deleted &&
+					memberStore?.storedAuthorKind(projectId, incoming.id) !== "user"
+				)
+					continue;
+			}
 			// Tombstones intentionally have no publication identity: their trusted
 			// project-scoped stored target remains the deletion authority below.
 			if (!incoming.deleted && "publicationSlug" in incoming) {
@@ -1015,8 +1499,13 @@ export function createCollabCloudService(
 					if (!allowed.has(location.filePath)) continue;
 				} else if (!allowed.has(comment.filePath)) continue;
 			}
-			const outcome = deps.mergeComment({ projectId, conversationId, comment });
-			if (outcome === "changed") inserted += 1;
+			const outcome = deps.mergeComment({
+				projectId,
+				conversationId,
+				comment,
+				stream: `legacy:${responseIdentity.teamId}`,
+			});
+			if (outcome === "changed") round.changed += 1;
 			else if (outcome !== "unchanged") {
 				throw new Error(
 					"Comment persistence did not acknowledge the pulled record",
@@ -1025,8 +1514,7 @@ export function createCollabCloudService(
 		}
 		etags.set(responseCursorKey, result.etag);
 		cursors.set(responseCursorKey, result.latestSeq);
-		if (inserted > 0) deps.onMerged?.({ projectId, inserted });
-		return true;
+		return !memberDrainIncomplete;
 	}
 
 	function pullProjectSingleflight(
@@ -1041,22 +1529,36 @@ export function createCollabCloudService(
 			identity.memberId,
 			projectId,
 		]);
+		// A wake that lands while a pull is running cannot join it: that pull may
+		// already have read the head the wake is about. It marks the running pull
+		// for exactly one trailing rerun instead, and every caller settles only
+		// after that rerun. Several wakes during one pull still buy one rerun.
 		const existing = inFlightPulls.get(inFlightKey);
-		if (existing) return existing;
-
-		const request = pollProject(identity, scopeKey, projectId, context).catch(
-			(error) => {
-				deps.onError?.(error);
-				return false;
-			},
-		);
-		inFlightPulls.set(inFlightKey, request);
-		void request.then(() => {
-			if (inFlightPulls.get(inFlightKey) === request) {
+		if (existing) {
+			existing.rerun = true;
+			return existing.promise;
+		}
+		const entry = { promise: Promise.resolve(false), rerun: false };
+		entry.promise = (async () => {
+			let ran: boolean;
+			do {
+				entry.rerun = false;
+				ran = await pollProject(identity, scopeKey, projectId, context).catch(
+					(error) => {
+						deps.onError?.(error);
+						return false;
+					},
+				);
+			} while (entry.rerun);
+			// Leave the map in the same synchronous step as the final rerun check:
+			// a wake arriving after this starts a fresh pull instead of marking a
+			// loop that has already finished.
+			if (inFlightPulls.get(inFlightKey) === entry)
 				inFlightPulls.delete(inFlightKey);
-			}
-		});
-		return request;
+			return ran;
+		})();
+		inFlightPulls.set(inFlightKey, entry);
+		return entry.promise;
 	}
 
 	async function pullProject(
@@ -1064,7 +1566,10 @@ export function createCollabCloudService(
 		context: WorkspaceCollabContext,
 	): Promise<boolean> {
 		const identity = pullIdentity(projectId, context);
-		if (!identity) return false;
+		if (!identity) {
+			forgetMemberSync(projectId);
+			return false;
+		}
 		return pullProjectSingleflight(context, identity, projectId);
 	}
 
@@ -1078,6 +1583,9 @@ export function createCollabCloudService(
 				const context =
 					(await deps.resolveProjectWorkspaceContext?.(projectId)) ?? null;
 				const identity = context ? pullIdentity(projectId, context) : null;
+				// A resolved context that is no longer a team scope stops member
+				// paging for the project; an unresolved one proves nothing.
+				if (context && !identity) forgetMemberSync(projectId);
 				if (!context || !identity) continue;
 				// Team registration remains directory-only; personal publication pulls
 				// deliberately never fetch or synthesize a member directory identity.

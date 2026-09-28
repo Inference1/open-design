@@ -31,6 +31,14 @@ export interface PublicFilePublicationStore {
     publication: PublicFilePublication,
   ): void;
   delete(scope: PublicFilePublicationScope): void;
+  /**
+   * Replace only the persisted share address of the publication at this slug.
+   * The address is a function of (project, slug) alone, so the slug is the
+   * whole guard: a row republished under another slug is left untouched. The
+   * revision witness and publish time are deliberately not rotated — this is a
+   * presentation refresh, not a new publication. Returns whether a row changed.
+   */
+  updateLink(scope: PublicFilePublicationScope, slug: string, url: string | null): boolean;
 }
 
 /** Full store capability for consumers that enumerate project publications. */
@@ -228,6 +236,12 @@ export function createInMemoryPublicFilePublicationStore(): StopQueuePublicFileP
     delete: (scope) => {
       publications.delete(scopeKey(scope));
     },
+    updateLink: (scope, slug, url) => {
+      const entry = publications.get(scopeKey(scope));
+      if (!entry || entry.publication.slug !== slug || entry.publication.url === url) return false;
+      entry.publication = { ...entry.publication, url };
+      return true;
+    },
   };
 }
 
@@ -268,6 +282,11 @@ export function createSqlitePublicFilePublicationStore(
       file_name = excluded.file_name,
       updated_at = excluded.updated_at,
       revision = excluded.revision
+  `);
+  const updateLinkRow = db.prepare(`
+    UPDATE public_file_publications SET url = ?
+     WHERE resource_team_id = ? AND owner_member_id = ? AND project_id = ? AND file_path = ?
+       AND slug = ? AND url IS NOT ?
   `);
   const deleteRow = db.prepare(`
     DELETE FROM public_file_publications
@@ -404,6 +423,10 @@ export function createSqlitePublicFilePublicationStore(
       // witness and every pre-stop personal relay revision as one SQLite
       // transaction, so immediate re-publication cannot revive stale rows.
       deletePublicationAndCancelOutbox(scope);
+    },
+    updateLink(scope, slug, url) {
+      return updateLinkRow.run(url, scope.resourceTeamId, scope.ownerMemberId, scope.projectId,
+        scope.filePath, slug, url).changes === 1;
     },
   };
 }

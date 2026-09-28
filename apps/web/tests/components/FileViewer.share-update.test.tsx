@@ -53,7 +53,9 @@ function publishedRoute(options: { freshness?: 'outdated' | 'current' | 'unknown
           ? { error: { code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED', message: 'Publication metadata could not be saved', data: { projectId: 'proj', ...publication } } }
           : { error: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE', failure: { stage: options.failureStage ?? 'push', reason: 'network' } }), { status: 502 });
         freshness = 'current';
-        return new Response(JSON.stringify(publication), { status: 200 });
+        // Contract shape: SharePublishResponse.
+        return new Response(JSON.stringify({ status: 'published', url: publication.url,
+          receipt: { filePath: 'index.html', slug: publication.slug, publishedAt: 1, version: 1, versionId: 'v1' } }), { status: 200 });
       }
       if (readFails) return new Response(JSON.stringify({ error: 'SHARE_STATE_UNAVAILABLE' }), { status: 503 });
       if (options.noPublication) return new Response(JSON.stringify({ publication: null, status: 'none', freshness: 'unknown' }), { status: 200 });

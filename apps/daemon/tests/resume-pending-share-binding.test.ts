@@ -59,8 +59,8 @@ it.each(['bound', 'failed', 'stale', 'other-owner'])('binding-only retry preserv
       expect(result).toMatchObject({ status: mode === 'bound' ? 'published' : 'binding_pending', receipt });
       expect(outbox.list()).toHaveLength(mode === 'bound' ? 0 : 1);
       if (mode === 'failed') expect(outbox.list()[0]!.failureCount).toBe(2);
-      expect(sharePublishResponse(result!, 'http://localhost:5173/artifact/p/' + receipt.slug)).toMatchObject({ url: 'http://localhost:5173/artifact/p/' + receipt.slug, receipt });
-      expect(sharePublishResponse(result!, null)).toMatchObject({ link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' }, receipt });
+      expect(sharePublishResponse(result!, { url: 'http://localhost:5173/artifact/p/' + receipt.slug })).toMatchObject({ url: 'http://localhost:5173/artifact/p/' + receipt.slug, receipt });
+      expect(sharePublishResponse(result!, { url: null, code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' })).toMatchObject({ link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' }, receipt });
     }
   } finally { db.close(); }
 });

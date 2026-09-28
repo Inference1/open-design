@@ -202,6 +202,7 @@ describe('public file publication restart lifecycle', () => {
       get: () => null,
       getRevision: () => null,
       deleteIfRevisionMatches: () => false,
+      updateLink: () => false,
       set: () => {
         throw new Error('sqlite disk full');
       },
@@ -230,7 +231,7 @@ describe('public file publication restart lifecycle', () => {
     cloud.set('project-1:index.html', { projectId: 'project-1', sourceFilePath: 'index.html', slug: fixtureShareSlug, status: 'active' });
     vela.runResourceCommand.mockResolvedValue(JSON.stringify({ id: 'version-2', version: 2 }));
     const store: PublicFilePublicationStore = {
-      get: () => null, getRevision: () => null, deleteIfRevisionMatches: () => false,
+      get: () => null, getRevision: () => null, deleteIfRevisionMatches: () => false, updateLink: () => false,
       set: () => { throw new Error('disk full'); }, delete: () => {},
     };
     const daemon = await startDaemon(projectDir, store);
@@ -265,6 +266,7 @@ describe('public file publication restart lifecycle', () => {
       get: () => null,
       getRevision: () => null,
       deleteIfRevisionMatches: () => false,
+      updateLink: () => false,
       set: () => {
         throw new Error('sqlite disk full');
       },
@@ -279,7 +281,8 @@ describe('public file publication restart lifecycle', () => {
       error: {
         code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
         data: {
-          url: `https://viewer.example.test/cloud/artifact/project-1/${fixtureShareSlug}`,
+          projectId: 'project-1',
+          url: `https://viewer.example.test/artifact/project-1/${fixtureShareSlug}`,
           slug: fixtureShareSlug,
           fileName: 'index.html',
         },
@@ -289,7 +292,7 @@ describe('public file publication restart lifecycle', () => {
       'od project share stop',
     );
     expect((publish.body.error as { message: string }).message).toContain(
-      `https://viewer.example.test/cloud/artifact/project-1/${fixtureShareSlug}`,
+      `https://viewer.example.test/artifact/project-1/${fixtureShareSlug}`,
     );
   });
 
@@ -331,7 +334,7 @@ describe('public file publication restart lifecycle', () => {
     const afterRevoke = await restartedDaemon.request('GET');
 
     expect(restored.body.publication).toEqual({
-      url: `https://viewer.example.test/cloud/artifact/project-1/${fixtureShareSlug}`,
+      url: `https://viewer.example.test/artifact/project-1/${fixtureShareSlug}`,
       slug: fixtureShareSlug,
       fileName: 'index.html',
     });
@@ -388,6 +391,7 @@ describe('public file publication failure detail', () => {
     get: () => null,
     getRevision: () => null,
     deleteIfRevisionMatches: () => false,
+    updateLink: () => false,
     set: () => {},
     delete: () => {},
   });

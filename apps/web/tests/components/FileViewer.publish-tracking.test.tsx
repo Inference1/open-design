@@ -129,7 +129,7 @@ function stubFetch(
         const body =
           publishBody ??
           (publishStatus === 200
-            ? { url: 'https://open-design.ai/p/slug-1', slug: 'slug-1', fileName: 'index.html' }
+            ? { status: 'published', url: 'https://open-design.ai/p/slug-1', receipt: { filePath: 'index.html', slug: 'slug-1', publishedAt: 1, version: 1, versionId: 'v1' } }
             : { error: { message: 'WORKSPACE_IDENTITY_REQUIRED' } });
         return new Response(JSON.stringify(body), { status: publishStatus });
       }
@@ -355,9 +355,9 @@ describe('publish flow analytics', () => {
               await publishGate;
               return new Response(
                 JSON.stringify({
+                  status: 'published',
                   url: 'https://open-design.ai/p/slug-1',
-                  slug: 'slug-1',
-                  fileName: 'index.html',
+                  receipt: { filePath: 'index.html', slug: 'slug-1', publishedAt: 1, version: 1, versionId: 'v1' },
                 }),
                 { status: 200 },
               );

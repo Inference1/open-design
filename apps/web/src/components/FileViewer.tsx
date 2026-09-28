@@ -151,6 +151,7 @@ import {
   fetchProjectPreviewBaseHref,
   fetchProjectFiles,
   fetchProjectFilePublicShareState,
+  publicFileShareLinkFromRead,
   fetchProjectFileText,
   fetchProjectFileTextPreview,
   uploadProjectFiles,
@@ -7721,7 +7722,11 @@ function HtmlViewer({
       && publishFailureKey === 'fileViewer.publishFileTooLarge') setPublishFailureKey(null);
   }, [sharePanelOpen, publishingPublicFile, publishFailureKey]);
   const updateInFlightRef = useRef(false);
-  const filePublished = publishedFileUrl.length > 0;
+  // Published is decided by the durable alias, not by the URL: without a
+  // configured Viewer origin a live publication has no URL, and treating it as
+  // unpublished would offer Publish again and upload a duplicate.
+  const filePublished = publishedFileSlug.length > 0;
+  const publishedLinkUnavailable = filePublished && publishedFileUrl.length === 0;
   // Public links need a signed-in workspace (any type); see canPublishPublicFile.
   const canPublishPublic = canPublishPublicFile(workspaceContext);
   const publicFileRequestSeqRef = useRef(0);
@@ -7911,6 +7916,7 @@ function HtmlViewer({
           || current.projectId !== projectId || current.fileName !== file.name) return;
         setFileShareStatus(state.status ?? null);
         setFileShareFreshness(state.freshness ?? 'unknown');
+        const knownLink = publicFileShareLinkFromRead(state);
         // Missing local metadata is not proof a live remote link was stopped.
         if (state.status === 'stopped') {
           onObservedPublicShareLink?.(null);
@@ -7918,11 +7924,13 @@ function HtmlViewer({
           // An unavailable read is not a confirmed stop and keeps the link.
           setPublishedFileUrl('');
           setPublishedFileSlug('');
-        } else if (state.publication) {
-          setPublishedFileUrl(state.publication.url);
-          setPublishedFileSlug(state.publication.slug);
+        } else if (knownLink) {
+          // A live publication without a Viewer address keeps its slug so the
+          // owner can still stop it; only a real URL is observable as a link.
+          setPublishedFileUrl(knownLink.url ?? '');
+          setPublishedFileSlug(knownLink.slug);
           if (state.status === 'active' && workspaceContext && sourceAuthorizationScopeKey
-            && state.publication.url && state.publication.slug) {
+            && state.publication?.url && state.publication.slug) {
             onObservedPublicShareLink?.({ status: 'active', projectId, filePath: file.name,
               slug: state.publication.slug, url: state.publication.url,
               workspaceId: workspaceContext.workspaceId, workspaceMemberId: workspaceContext.workspaceMemberId,
@@ -7953,17 +7961,20 @@ function HtmlViewer({
           || current.projectId !== projectId || current.fileName !== file.name) return;
         setFileShareStatus(state.status ?? null);
         setFileShareFreshness(state.freshness ?? 'unknown');
+        const knownLink = publicFileShareLinkFromRead(state);
         if (state.status === 'stopped') {
           onObservedPublicShareLink?.(null);
           // A confirmed remote stop outranks a previously known local URL.
           // An unavailable read is not a confirmed stop and keeps the link.
           setPublishedFileUrl('');
           setPublishedFileSlug('');
-        } else if (state.publication) {
-          setPublishedFileUrl(state.publication.url);
-          setPublishedFileSlug(state.publication.slug);
+        } else if (knownLink) {
+          // A live publication without a Viewer address keeps its slug so the
+          // owner can still stop it; only a real URL is observable as a link.
+          setPublishedFileUrl(knownLink.url ?? '');
+          setPublishedFileSlug(knownLink.slug);
           if (state.status === 'active' && workspaceContext && sourceAuthorizationScopeKey
-            && state.publication.url && state.publication.slug) {
+            && state.publication?.url && state.publication.slug) {
             onObservedPublicShareLink?.({ status: 'active', projectId, filePath: file.name,
               slug: state.publication.slug, url: state.publication.url,
               workspaceId: workspaceContext.workspaceId, workspaceMemberId: workspaceContext.workspaceMemberId,
@@ -8058,6 +8069,8 @@ function HtmlViewer({
         result: 'success',
         publish_duration_ms: Math.round(performance.now() - publishStarted),
       }, publishRequestId);
+      // Project-wide, so announce it even if the viewer moved on meanwhile.
+      if (response.madeTeamVisible) notifyTeamProjectsChanged({ projectId: requestProjectId, kind: 'catalog' });
       const current = publicFileIdentityRef.current;
       if (
         publicFileRequestSeqRef.current !== requestSeq ||
@@ -8066,8 +8079,9 @@ function HtmlViewer({
       ) {
         return;
       }
-      setPublishedFileUrl(response.url);
+      setPublishedFileUrl(response.url ?? '');
       setPublishedFileSlug(response.slug);
+      if (response.madeTeamVisible) setShareAccess('workspace');
       clearPublicFileProgressTimers();
       setPublishProgress(boundedPublishProgress(0, true));
       // Keep success observable without delaying the link or S3's clipboard window.
@@ -8078,9 +8092,15 @@ function HtmlViewer({
       }, 1000);
       // Copy this response, not the previous render's URL. Clipboard failure
       // is not publication failure, and automatic copy is not a user click.
-      void copyPublicFileUrl(response.url);
+      // With no Viewer origin there is no link to copy; the panel says so.
+      if (response.url) void copyPublicFileUrl(response.url);
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
+      // A failed publish may still have registered a private team-workspace
+      // project in the team catalog; re-read visibility instead of assuming.
+      if (workspaceContext?.workspaceType === 'team' && shareAccess === 'private') {
+        notifyTeamProjectsChanged({ projectId: requestProjectId, kind: 'catalog' });
+      }
       const recoveryPublication = publicFileManualRevokePublication(error);
       firePublishResult({
         action: 'publish',
@@ -8094,7 +8114,7 @@ function HtmlViewer({
         clearPublicFileProgressTimers();
         setPublishProgress(null);
         if (recoveryPublication) {
-          setPublishedFileUrl(recoveryPublication.url);
+          setPublishedFileUrl(recoveryPublication.url ?? '');
           setPublishedFileSlug(recoveryPublication.slug);
           setPublishLinkFeedback(null);
           setPublishFailureKey(null);
@@ -8136,7 +8156,7 @@ function HtmlViewer({
       const current = publicFileIdentityRef.current;
       if (requestSeq !== publicFileRequestSeqRef.current
         || current.projectId !== requestProjectId || current.fileName !== requestFileName) return;
-      setPublishedFileUrl(response.url);
+      setPublishedFileUrl(response.url ?? '');
       setPublishedFileSlug(response.slug);
       setFileShareFreshness('unknown');
       setUpdateToast('success');
@@ -8147,9 +8167,10 @@ function HtmlViewer({
           if (requestSeq !== publicFileRequestSeqRef.current) return;
           setFileShareStatus(state.status ?? null);
           setFileShareFreshness(state.freshness ?? 'unknown');
-          if (state.publication) {
-            setPublishedFileUrl(state.publication.url);
-            setPublishedFileSlug(state.publication.slug);
+          const knownLink = publicFileShareLinkFromRead(state);
+          if (knownLink) {
+            setPublishedFileUrl(knownLink.url ?? '');
+            setPublishedFileSlug(knownLink.slug);
           }
         })
         .catch(() => {
@@ -15196,7 +15217,7 @@ function HtmlViewer({
   // guards the actual export/publish handlers.
   const rawCanShare = source !== null && isShareableArtifact;
   const shareGuideAppUserId = useShareGuideAppUserId();
-  const projectShareHistory = useProjectShareHistory(projectId, workspaceContext, JSON.stringify([file.name, publishedFileUrl]));
+  const projectShareHistory = useProjectShareHistory(projectId, workspaceContext, JSON.stringify([file.name, publishedFileSlug, publishedFileUrl]));
   const afterExportGuide = useAfterExportShareGuide({
     scopeKey: JSON.stringify([projectId, file.name, workspaceAccountScopedCacheKey(workspaceContext)]),
     appUserId: shareGuideAppUserId,
@@ -17322,6 +17343,7 @@ function HtmlViewer({
                         setWorkspaceShareAccess={setWorkspaceShareAccess}
                         canPublishPublic={canPublishPublic}
                         filePublished={filePublished}
+                        publishedLinkUnavailable={publishedLinkUnavailable}
                         publishedFileUrl={publishedFileUrl}
                         copyPublishedFileLink={copyPublishedFileLink}
                         publishLinkFeedback={publishLinkFeedback}

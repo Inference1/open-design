@@ -2,6 +2,11 @@ import type { SharePublishResult } from '@open-design/contracts';
 import type { PublicFilePublicationScope } from './public-file-publication-store.js';
 import type { createShareAliasReservations } from './share-alias-reservation.js';
 import { runVelaCommand, velaWorkspaceCommandOptions } from '../integrations/vela-command.js';
+import { parseAmrShareLink, type AmrShareLink } from './public-share-viewer-url.js';
+
+/** A publish outcome plus what AMR said about its address. Only a published
+ * (bound) share carries one; `amrLink` is absent when AMR said nothing. */
+export type VelaSharePublishResult = SharePublishResult & { amrLink?: AmrShareLink };
 
 export interface VelaSharePublishInput {
   /** Original local file, not the rewritten package entry. */
@@ -27,7 +32,7 @@ export async function publishReservedVelaShareVersion(
   input: ReservedVelaSharePublishInput,
   reservations: ReturnType<typeof createShareAliasReservations>,
   run: typeof runVelaCommand = runVelaCommand,
-): Promise<SharePublishResult> {
+): Promise<VelaSharePublishResult> {
   const { scope, ...upload } = input;
   const identity = { ...scope };
   const target = reservations.reserve(identity);
@@ -43,7 +48,7 @@ export async function publishReservedVelaShareVersion(
 export async function publishVelaShareVersion(
   input: VelaSharePublishInput,
   run: typeof runVelaCommand = runVelaCommand,
-): Promise<SharePublishResult> {
+): Promise<VelaSharePublishResult> {
   try {
     const request = Object.freeze({ ...input });
     // Blank versionId makes the Go command fall back to a mutable ref; blank
@@ -82,7 +87,8 @@ export async function publishVelaShareVersion(
     const receipt = { filePath: request.filePath, slug: request.slug, version: record.version,
       versionId: request.versionId, publishedAt: record.publishedAt, entryPath: request.entryPath };
     if (record.status !== 'published') throw new Error('unconfirmed publish outcome');
-    return { status: 'published', receipt };
+    const amrLink = parseAmrShareLink(record, request.projectId, request.slug);
+    return { status: 'published', receipt, ...(amrLink ? { amrLink } : {}) };
   } catch {
     // Child diagnostics can include upstream bodies. No fallback to snapshots
     // or implicit retry: the remote pointer may already have advanced.

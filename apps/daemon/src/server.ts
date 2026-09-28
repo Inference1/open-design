@@ -968,6 +968,7 @@ import { sourcePathForCurrentPublication } from './collab/comment-relay-publicat
 import { recordPersonalPublishedCommentMutation } from './collab/published-comment-mutation.js';
 import { createPublicFilePublicationRecorder } from './collab/public-file-publication-recording.js';
 import { enqueuePublishedFileComments } from './collab/published-file-comment-backfill.js';
+import { isPrivateTeamProjectOfCreator, markPublishedTeamProjectVisible } from './collab/public-share-team-visibility.js';
 import { createVelaPublicFileStop } from './collab/vela-public-file-stop.js';
 import { createShareContentFingerprints } from './collab/share-content-fingerprint.js';
 import { createShareBindingOutbox } from './collab/share-binding-outbox.js';
@@ -1083,7 +1084,7 @@ import { createCommentAlignmentService, runVelaCommentAlignment } from './collab
 import { registerCommentAlignmentRoutes } from './routes/project/comments.js';
 import { createShareAliasReservations } from './collab/share-alias-reservation.js';
 import { createSharePublicationCompletion } from './collab/share-publication-completion.js';
-import { resolvePublicShareViewerUrl } from './collab/public-share-viewer-url.js';
+import { resolvePublicShareLink } from './collab/public-share-viewer-url.js';
 import { ensurePublicShareProject } from './collab/public-share-project-bootstrap.js';
 import { createVelaProjectShareState } from './collab/vela-project-share-state.js';
 import { registerPublicFileStopRetryRoutes } from './routes/public-file-stop-retry.js';
@@ -1130,8 +1131,10 @@ import {
 } from './collab/resource-principal.js';
 import { createCollabCloudClientFromEnv } from './integrations/collab-cloud.js';
 import { createCollabCloudService } from './collab/collab-cloud-service.js';
+import { createCommentInboundStore } from './collab/comment-inbound-store.js';
 import {
   commentRelayLocalBindingMatches,
+  commentRelayRecordPromotedToTeam,
   createCommentRelayOutboxStore,
 } from './collab/comment-relay-outbox.js';
 import { createWorkspaceInvalidationPoller } from './collab/workspace-invalidation-poller.js';
@@ -4466,6 +4469,17 @@ export async function startServer({
     ? createCollabCloudService({
         client: collabCloudClient,
         commentOutbox: createCommentRelayOutboxStore(db),
+        // C3-LITE member comment pages (BO1), served by the AMR API through the
+        // Vela CLI. The HTTP relay (OD_COLLAB_CLOUD_URL) has no paged route, so
+        // it keeps the legacy pull. An unusable cursor is rebuilt from a fresh
+        // snapshot in the same drain (BO2).
+        ...(velaCliCollabClient ? { memberCommentStore: createCommentInboundStore(db) } : {}),
+        isMemberSyncProjectShared: (projectId) => {
+          const binding = getWorkspaceProjectByProjectId(db, projectId);
+          return binding?.visibility === 'team' && binding.resourceState !== 'deleted';
+        },
+        onMemberSyncRebuildRequired: ({ projectId, code }) =>
+          console.warn(`[od] collab member comment cursor rebuilding (${code}) for project ${projectId}`),
         commentRelayScope: (projectId, filePath, context) => commentRelayScope({
           binding: getWorkspaceProjectByProjectId(db, projectId),
           context,
@@ -4535,6 +4549,11 @@ export async function startServer({
             record,
             getWorkspaceProjectByProjectId(db, record.projectId),
           ),
+        isCommentRelayRecordPromotedToTeam: (record) =>
+          commentRelayRecordPromotedToTeam(
+            record,
+            getWorkspaceProjectByProjectId(db, record.projectId),
+          ),
         resolveCommentRelayWorkspaceContext: async (queuedIdentity) => {
           const context = await resolveBoundProjectWorkspaceContext(
             queuedIdentity.projectId,
@@ -4571,8 +4590,8 @@ export async function startServer({
         resolveProjectWorkspaceContext: resolveBoundProjectWorkspaceContext,
         resolveLocalConversationId: (projectId) =>
           getProjectCommentAnchorConversationId(db, projectId),
-        mergeComment: ({ projectId, conversationId, comment }) =>
-          mergeSyncedPreviewComment(db, projectId, conversationId, comment),
+        mergeComment: ({ projectId, conversationId, comment, stream }) =>
+          mergeSyncedPreviewComment(db, projectId, conversationId, comment, { stream }),
         onError: (error) => console.warn('[od] collab cloud sync error:', error),
         onCommentPushed: ({ projectId, commentId, seq, memberId, authorKey }) => {
           confirmPreviewCommentPinSeq(db, projectId, commentId, seq);
@@ -4582,6 +4601,9 @@ export async function startServer({
         // merges any teammate change into local storage (a new comment, a
         // strictly-newer edit/status change, or a delete tombstone all count),
         // push a thin `comment-changed` onto the project's existing events SSE.
+        // The service calls this at most once per pull round (a multi-page
+        // drain plus its legacy pull is one signal), so a burst of merged rows
+        // costs the web one list read, not one per page or row.
         // The open project view re-fetches the comment list on receipt, so the
         // owner sees a member's freshly-synced comment without waiting for the
         // web poll tick.
@@ -5343,7 +5365,9 @@ export async function startServer({
     // publication cannot enqueue work that later resolves against nothing.
     recordPublicFilePublication,
     resolveLocalPublicShareOwner: resolveLocalProjectOwner,
-    resolvePublicShareLink: (projectId, slug) => resolvePublicShareViewerUrl(projectId, slug, process.env, configuredAmrEnv()),
+    isPrivateTeamProjectOfCreator: (projectId, principal) => isPrivateTeamProjectOfCreator(db, projectId, principal),
+    markPublishedTeamProjectVisible: (projectId, principal) => markPublishedTeamProjectVisible(db, projectId, principal),
+    resolvePublicShareLink: (projectId, slug, amr) => resolvePublicShareLink(projectId, slug, amr, process.env, configuredAmrEnv()),
     sharePublishing: {
       ensureProject: (scope, principal, run) => ensurePublicShareProject({
         projectId: scope.projectId, principal, run, describeProject: describeCollabProject,
@@ -5356,20 +5380,19 @@ export async function startServer({
       reservations: createShareAliasReservations(db),
       outbox: shareBindingOutbox,
       complete: createSharePublicationCompletion(db, recordPublicFilePublication, shareBindingOutbox, true),
-      prepare: async (scope, slug) => {
+      prepare: async scope => {
         const identity = Object.freeze({ ...scope });
         const configuredEnv = { ...configuredAmrEnv() };
         const currentSession = readVelaControlApiContext(process.env, configuredEnv);
         if (!currentSession?.controlKey || !currentSession.apiUrl) throw new Error('PUBLIC_SHARE_SESSION_UNAVAILABLE');
         const session = Object.freeze({ ...currentSession });
-        const url = resolvePublicShareViewerUrl(identity.projectId, slug, process.env, configuredEnv);
         const directory = await fetchVelaWorkspaceDirectory({ readSession: () => session });
         if (!directory.ok || !directory.items.some(item => item.workspaceId === identity.resourceTeamId
           && item.workspaceMemberId === identity.ownerMemberId && item.memberStatus === 'active'
           && item.lifecycleState !== 'deleted' && item.lifecycleState !== 'deleting')) {
           throw new Error('PUBLIC_SHARE_IDENTITY_UNAVAILABLE');
         }
-        return { url, run: args => runPinnedVelaCommand({ args, session,
+        return { run: args => runPinnedVelaCommand({ args, session,
           workspaceId: identity.resourceTeamId, dataRoot: RUNTIME_DATA_DIR, configuredEnv }) };
       },
       retry: () => {

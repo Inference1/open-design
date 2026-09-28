@@ -4197,6 +4197,7 @@ export interface Dict {
   'fileViewer.generateAndCopyLink': string;
   'fileViewer.linkAccessTitle': string;
   'fileViewer.linkAccessDescription': string;
+  'fileViewer.publicLinkUnavailable': string;
   'fileViewer.publishSingleFileDescription': string;
   'fileViewer.openFileRequired': string;
   'fileViewer.publishFile': string;
@@ -4210,6 +4211,7 @@ export interface Dict {
    *  hard-coded Chinese string, `publicationStatus === 'stopped'` branch). */
   'fileViewer.shareReopening': string;
   'fileViewer.publishingContinuesOnClose': string;
+  'fileViewer.publishMakesProjectTeamVisible': string;
   'fileViewer.unpublishFile': string;
   /** @deprecated Orphaned (recvqgif6Xa7Wb): rendered the "no team to share
    *  with yet" bridge card with its create-team CTA in the share panel.

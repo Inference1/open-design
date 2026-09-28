@@ -317,3 +317,50 @@ describe('pin_seq concurrency — two devices, no collision after confirmation (
     expect(mergedOnA?.pinSeq).not.toBe(confirmedA?.pinSeq);
   });
 });
+
+describe('pin_seq stays distinct when a private project starts relaying (share P0 two "1." pins)', () => {
+  function wire(id: string, seq: number): CollabCloudComment {
+    return {
+      id, projectId: 'project-1', conversationId: 'remote', memberId: 'member-peer', seq,
+      note: id, filePath: 'index.html', elementId: 'hero-title', selector: '[data-od-id="hero-title"]',
+      label: 'h1.hero-title', text: 'Hero', htmlHint: '<h1>', position: { x: 0, y: 0, width: 10, height: 10 },
+      status: 'open', createdAt: 1000, updatedAt: 1000,
+    };
+  }
+  function privateComments(db: ReturnType<typeof seededDb>) {
+    // Written while the project was private: settled local numbers 1 and 2
+    // that the cloud never assigned.
+    const add = (note: string) => upsertPreviewComment(db, 'project-1', 'conversation-1', { target: target(), note })!;
+    return [add('a'), add('b')] as const;
+  }
+
+  it('a new comment whose cloud seq lands on a private-period pin takes the next free number', () => {
+    const db = seededDb();
+    const [a, b] = privateComments(db);
+    const fresh = upsertPreviewComment(db, 'project-1', 'conversation-1', { target: target(), note: 'new' },
+      { pinPendingCloudConfirm: true })!;
+    expect([a.pinSeq, b.pinSeq, fresh.pinSeq]).toEqual([1, 2, 3]);
+    // The cloud had never seen a or b, so the first relayed comment gets seq 1.
+    expect(confirmPreviewCommentPinSeq(db, 'project-1', fresh.id, 1)).toBe(true);
+    expect(getPreviewComment(db, 'project-1', 'conversation-1', fresh.id)?.pinSeq).toBe(3);
+    expect(getPreviewComment(db, 'project-1', 'conversation-1', a.id)?.pinSeq).toBe(1);
+  });
+
+  it('a pulled comment whose wire seq lands on a private-period pin takes the next free number', () => {
+    const db = seededDb();
+    privateComments(db);
+    expect(mergeSyncedPreviewComment(db, 'project-1', 'conversation-1', wire('from-share-page', 1))).toBe('changed');
+    expect(getPreviewComment(db, 'project-1', 'conversation-1', 'from-share-page')?.pinSeq).toBe(3);
+  });
+
+  it('an unconfirmed provisional pin does not block adopting the cloud seq, so devices still converge', () => {
+    const db = seededDb();
+    const provisional = upsertPreviewComment(db, 'project-1', 'conversation-1', { target: target(), note: 'mine' },
+      { pinPendingCloudConfirm: true })!;
+    expect(provisional.pinSeq).toBe(1);
+    expect(mergeSyncedPreviewComment(db, 'project-1', 'conversation-1', wire('peer', 1))).toBe('changed');
+    expect(getPreviewComment(db, 'project-1', 'conversation-1', 'peer')?.pinSeq).toBe(1);
+    expect(confirmPreviewCommentPinSeq(db, 'project-1', provisional.id, 2)).toBe(true);
+    expect(getPreviewComment(db, 'project-1', 'conversation-1', provisional.id)?.pinSeq).toBe(2);
+  });
+});

@@ -300,13 +300,28 @@ describe('od project CLI', () => {
   });
 
   it.each(['publish', 'resume', 'get'])('%s reports no-link success without printing undefined or declaring failure', async action => {
-    const body = { status: action !== 'get' ? 'published' : 'active', link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' }, ...(action === 'get' ? { publication: null, freshness: 'unknown' } : { receipt: { slug: 'stable', filePath: 'nested/index.html', versionId: 'v1', version: 1, publishedAt: 1, entryPath: 'index.html' } }) };
+    const body = { status: action !== 'get' ? 'published' : 'active', link: { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' }, ...(action === 'get' ? { publication: null, slug: 'stable', freshness: 'unknown' } : { receipt: { slug: 'stable', filePath: 'nested/index.html', versionId: 'v1', version: 1, publishedAt: 1, entryPath: 'index.html' } }) };
     stub = await startProjectStubServer(undefined, body);
     const args = ['project', 'share', action, 'project-1', '--path', 'nested/index.html', '--daemon-url', stub.baseUrl];
     const result = await runCli(args);
-    expect(result.code).toBe(0); expect(result.stdout.trim()).toBe('Published; link temporarily unavailable.');
+    expect(result.code).toBe(0); expect(result.stdout.trim()).toBe('Published; link temporarily unavailable (slug stable).');
+    expect(result.stdout).not.toContain('undefined');
     const json = await runCli([...args, '--json']);
     expect(json.code).toBe(0); expect(JSON.parse(json.stdout)).toEqual(body);
+  });
+  it('publish that made a private team project team-visible prints the same notice as the UI and keeps the JSON field', async () => {
+    const body = { status: 'published', url: 'https://viewer.example.test/s', madeTeamVisible: true, receipt: { slug: 'stable', filePath: 'nested/index.html', versionId: 'v1', version: 1, publishedAt: 1, entryPath: 'index.html' } };
+    stub = await startProjectStubServer(undefined, body);
+    const args = ['project', 'share', 'publish', 'project-1', '--path', 'nested/index.html', '--daemon-url', stub.baseUrl];
+    const human = await runCli(args);
+    expect(human.code).toBe(0);
+    expect(human.stdout.trim()).toBe('https://viewer.example.test/s');
+    expect(human.stderr).toBe('[project] notice: this project is now visible to your team members.\n');
+    const json = await runCli([...args, '--json']);
+    expect(json.code).toBe(0); expect(json.stderr).toBe('');
+    expect(JSON.parse(json.stdout)).toMatchObject({ madeTeamVisible: true });
+    const help = await runCli(['project', 'share', '--help']);
+    expect(help.stdout).toContain('"madeTeamVisible": true');
   });
   it('retry-stop targets the persisted file intent, never the deleted project DELETE route', async () => {
     stub = await startProjectStubServer();

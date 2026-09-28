@@ -43,7 +43,7 @@ it.skipIf(!process.env.OD_TEST_VELA_BIN).each(['success', 'missing-proof', 'conf
     const session = { profile: 'test' as const, apiUrl: `http://127.0.0.1:${address.port}`, controlKey: 'synthetic', user: null, configMtimeMs: null };
     const complete = operation === 'resume' ? resumeVelaShareVersion : bindVelaShareVersion;
     const result = complete(input, args => runPinnedVelaCommand({ args, session, dataRoot: root, workspaceId: 'w', configuredEnv: { VELA_BIN: binary } }));
-    if (mode === 'success') await expect(result).resolves.toBeUndefined(); else await expect(result).rejects.toThrow(/^PUBLIC_SHARE_BINDING_FAILED$/);
+    if (mode === 'success') await expect(result).resolves.not.toBeUndefined(); else await expect(result).rejects.toThrow(/^PUBLIC_SHARE_BINDING_FAILED$/);
     expect(calls).toEqual([{ url: operation === 'resume' ? '/api/v1/collab/shares/stable/resume' : '/api/v1/collab/shares/complete', method: 'POST', workspace: 'w', body: { projectId: 'p', slug: 'stable', sourceFilePath: 'pages/local.html', expectedResourceId: 'r', expectedVersion: 2, expectedVersionId: 'immutable' } }]);
     expect(await readdir(root)).toEqual([]);
   } finally {

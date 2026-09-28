@@ -1,17 +1,19 @@
 import type { PublicFilePublicationStore } from './public-file-publication-store.js';
 import type { PublicFileMutations } from './public-file-mutations.js';
 import type { ShareBindingOutbox, ShareBindingTask } from './share-binding-outbox.js';
+import { persistedAmrShareUrl, type AmrShareLink } from './public-share-viewer-url.js';
 
 export interface PreparedShareBinding {
   resourceTeamId: string;
   ownerMemberId: string;
-  /** Must bind only this captured immutable publication, never publish again. */
-  bind(): Promise<void>;
+  /** Must bind only this captured immutable publication, never publish again.
+   * Resolves with the address AMR reported for the bound share, if any. */
+  bind(): Promise<AmrShareLink | null | void>;
 }
 export type PrepareShareBinding = (task: Readonly<ShareBindingTask>) => Promise<PreparedShareBinding | null>;
 export interface ShareBindingStartupOptions {
   prepare: PrepareShareBinding | null;
-  publications: Pick<PublicFilePublicationStore, 'getRevision'>;
+  publications: Pick<PublicFilePublicationStore, 'getRevision'> & Partial<Pick<PublicFilePublicationStore, 'updateLink'>>;
   /** Optional extra host restrictions; cannot override the durable witness. */
   isCurrent?(task: ShareBindingTask): boolean;
   mutations: PublicFileMutations;
@@ -50,10 +52,21 @@ export function createShareBindingStartup(outbox: ShareBindingOutbox, options: S
             result.deferred++; return;
           }
           let failed = false;
-          try { await operation.bind(); } catch { failed = true; }
+          let amrLink: AmrShareLink | null = null;
+          try { amrLink = await operation.bind() ?? null; } catch { failed = true; }
           if (!current()) { result.deferred++; return; }
           if (failed) { outbox.fail(task); result.failed++; }
-          else { outbox.complete(task); result.bound++; }
+          else {
+            outbox.complete(task); result.bound++;
+            // Background binding is one of the moments AMR hands out the
+            // address; keep the persisted copy current for offline display.
+            if (amrLink) {
+              try {
+                options.publications.updateLink?.({ resourceTeamId: task.resourceTeamId, ownerMemberId: task.ownerMemberId,
+                  projectId: task.projectId, filePath: task.receipt.filePath }, task.receipt.slug, persistedAmrShareUrl(amrLink));
+              } catch { console.warn('[od] share link persistence unavailable'); }
+            }
+          }
         });
       } catch {
         // Preserve budget on local reads/writes/lock failure and continue other projects.
