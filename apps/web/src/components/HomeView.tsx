@@ -2857,6 +2857,17 @@ export function HomeView({
       // Composer inputs are forwarded as-is; the deferred footer/media fields are
       // stripped from this set just below to form the run-facing inputs.
       const submittedApplyInputs = submittedActive ? submittedActive.inputs : defaultInputs;
+      // A chosen image route is project metadata, not a run-facing plugin
+      // input. Keep it before deferred inputs are removed so the created
+      // project retains the configured provider route while the agent can
+      // still ask about other hidden media settings.
+      const submittedProjectMetadata = submittedActive?.mediaSurface
+        ? metadataForHomeMediaComposer(
+            submittedActive.mediaSurface,
+            submittedApplyInputs,
+            promptTemplates,
+          )
+        : null;
       // Inputs forwarded to the run AND used to build the run-facing snapshot:
       // drop every now-hidden footer/media setting so the first-turn
       // question-form flow collects them instead of inheriting a baked-in
@@ -2950,13 +2961,12 @@ export function HomeView({
       const contextLinkedDirs = contextLinkedDirCandidates;
       const submittedProjectKind =
         submittedActive?.projectKind ?? fallbackProjectKind ?? projectKindForSkill(activeSkill) ?? 'other';
-      const submittedProjectMetadata = submittedActive?.mediaSurface
-        ? metadataForHomeMediaComposer(submittedActive.mediaSurface, submittedActive.inputs, promptTemplates)
-        : homeCreateProjectMetadata(
-            submittedProjectKind,
-            submittedActive?.inputs ?? null,
-            submittedActive?.projectMetadata ?? fallbackProjectMetadata ?? null,
-          );
+      const resolvedProjectMetadata = submittedProjectMetadata
+        ?? homeCreateProjectMetadata(
+          submittedProjectKind,
+          submittedActive?.inputs ?? null,
+          submittedActive?.projectMetadata ?? fallbackProjectMetadata ?? null,
+        );
       // A mentioned Skill travels with whatever the composer selected, rather
       // than replacing it: the pick decides the route, the Skill is material
       // inside it. In Design mode, free-form prompts route through the default
@@ -3018,7 +3028,7 @@ export function HomeView({
           : submittedActive?.result?.appliedPlugin?.taskKind ?? null,
         ...(!automaticStrategyTaskProfile ? { pluginInputs: submittedPluginInputs } : {}),
         projectKind: submittedProjectKind,
-        projectMetadata: submittedProjectMetadata,
+        projectMetadata: resolvedProjectMetadata,
         designSystemId: submittedDesignSystemId,
         ...(submittedDesignSystemId && designSystemCatalogScope
           ? { designSystemCatalogScope }

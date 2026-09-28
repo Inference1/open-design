@@ -290,7 +290,7 @@ describe('NewProjectPanel media provider badges', () => {
     expect(screen.queryByTestId('model-picker-option-gpt-image-2')).toBeNull();
   });
 
-  it('keeps the managed Vela default when another provider is configured', () => {
+  it('uses a configured Volcengine provider as the default image route', () => {
     const onCreate = vi.fn();
     render(
       <NewProjectPanel
@@ -322,7 +322,7 @@ describe('NewProjectPanel media provider badges', () => {
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
-          imageModel: 'vela/gpt-image-2',
+          imageModel: 'doubao-seedream-3-0-t2i-250415',
         }),
       }),
     );
