@@ -8,6 +8,13 @@ const output = resolve(import.meta.dirname, '../../.tmp/ui-audit/final-design-re
 const captureTime = new Date().toISOString().replace(/[:.]/g, '-');
 test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: 'light', locale: 'zh-CN' });
 
+// SharePublishResponse (packages/contracts/src/api/share.ts): the POST
+// publish-public body carries the slug inside `receipt`, not at the top
+// level — see `publicFileShareLinkFromPublish` in providers/registry.ts.
+function publishedFixture(slug: string, url: string, filePath = 'index.html') {
+  return { status: 'published' as const, receipt: { filePath, slug, publishedAt: Date.now(), version: 1, versionId: `${slug}-v1`, entryPath: filePath }, url };
+}
+
 async function capture(page: Page, id: string, detail: Record<string, unknown> = {}) {
   const name = `Owner-${id}-${captureTime}`;
   await mkdir(output, { recursive: true });
@@ -65,7 +72,7 @@ async function createHtmlProject(page: Page, projectId: string) {
   await page.goto(`/projects/${projectId}/conversations/${conversationId}`);
   const card = page.getByTestId('artifact-card-publish-index.html');
   await expect(card).toBeVisible();
-  await card.click();
+  await page.getByTestId('file-workspace').getByRole('button', { name: '分享', exact: true }).click(); // top-right Share, not the chat artifact card
   const share = page.locator('.share-menu-popover[role="menu"]');
   await expect(share).toBeVisible();
   return { projectId, conversationId, share };
@@ -90,7 +97,7 @@ test('capture remaining OD share audit states from visible product UI', async ({
     : route.fallback());
   await page.reload();
   await expect(page.getByTestId('artifact-card-publish-index.html')).toBeVisible();
-  await page.getByTestId('artifact-card-publish-index.html').click();
+  await page.getByTestId('file-workspace').getByRole('button', { name: '分享', exact: true }).click();
   const updatedShare = page.locator('.share-menu-popover[role="menu"]');
   const update = updatedShare.getByRole('button', { name: /更新链接|Update link/ });
   await expect(update).toBeVisible();
@@ -103,7 +110,7 @@ test('capture remaining OD share audit states from visible product UI', async ({
   await page.route(publishPath, async route => {
     if (route.request().method() !== 'POST') return route.fallback();
     await gate;
-    await route.fulfill({ json: { url: oldUrl, slug: 'prior-link', fileName: 'index.html' } });
+    await route.fulfill({ json: publishedFixture('prior-link', oldUrl) });
   });
   const request = page.waitForRequest(req => req.method() === 'POST' && req.url().includes('/publish-public'));
   await update.click();
@@ -126,7 +133,7 @@ test('capture remaining OD share audit states from visible product UI', async ({
         failure: { stage: 'push', reason: 'upstream_http', upstreamStatus: 502 } } })
       : route.fallback());
   await page.reload();
-  await page.getByTestId('artifact-card-publish-index.html').click();
+  await page.getByTestId('file-workspace').getByRole('button', { name: '分享', exact: true }).click();
   const retryShare = page.locator('.share-menu-popover[role="menu"]');
   const retryUpdate = retryShare.getByRole('button', { name: /更新链接|Update link/ });
   await expect(retryUpdate).toBeVisible();

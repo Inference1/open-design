@@ -5,6 +5,12 @@ import { resolve } from 'node:path';
 import type { Page } from '@playwright/test';
 const out = resolve(import.meta.dirname,'../../.tmp/ui-audit/final-design-review/current');
 const captureRun = new Date().toISOString().replace(/[:.]/g, '-');
+// SharePublishResponse (packages/contracts/src/api/share.ts): the POST
+// publish-public body carries the slug inside `receipt`, not at the top
+// level — see `publicFileShareLinkFromPublish` in providers/registry.ts.
+function publishedFixture(slug: string, url: string, filePath = 'index.html') {
+  return { status: 'published' as const, receipt: { filePath, slug, publishedAt: Date.now(), version: 1, versionId: `${slug}-v1`, entryPath: filePath }, url };
+}
 test.use({ viewport:{width:1440,height:900},deviceScaleFactor:2,colorScheme:'light',locale:'zh-CN' });
 async function save(page:Page,id:string,observedState:string,detail:Record<string,unknown>={}){
   if (!new Set(['G1','G2','S1','S2','S3','S4','S4-C','S7','S9','S9-R','S10','S12','S15','C0','K2','K5','P1','S0','S1-T','S1-T2','S4-T','S14','S14-ERR']).has(id)) return;
@@ -45,7 +51,7 @@ test('capture isolated OD share entry, progress and failure states',async({page}
   await g1ToolbarMenu.getByRole('button',{name:/关闭|Close/}).click();
   await page.goto(`/projects/${projectId}/conversations/${conversationId}`);
   await expect(card).toBeVisible();
-  await card.click();
+  await page.getByTestId('file-workspace').getByRole('button',{name:'分享',exact:true}).click(); // top-right Share, not the chat artifact card
   const menu=page.locator('.share-menu-popover[role="menu"]');
   await expect(menu).toBeVisible();
   await expect(menu.getByText(/快速分享|分享至社交|Quick share|Social share/)).toHaveCount(0);
@@ -70,7 +76,7 @@ test('capture isolated OD share entry, progress and failure states',async({page}
   await save(page,'S15','S15');
   await page.evaluate(()=>{Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:()=>Promise.resolve()}});});
   const url=`https://example.test/artifact/${projectId}/ui-audit-link`;
-  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='POST')return r.continue();await r.fulfill({json:{url,slug:'ui-audit-link',fileName:'index.html'}});});
+  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='POST')return r.continue();await r.fulfill({json:publishedFixture('ui-audit-link',url)});});
   const retry=menu.getByRole('menuitem').filter({hasText:/重试|Retry/}).first();
   await expect(retry).toBeVisible();
   await retry.click();
@@ -82,7 +88,7 @@ test('capture isolated OD share entry, progress and failure states',async({page}
   await save(page,'S4','S4');
   await menu.getByRole('button',{name:/关闭|Close/}).click();
   await save(page,'G2-entry','G2-entry');
-  await card.click();
+  await page.getByTestId('file-workspace').getByRole('button',{name:'分享',exact:true}).click(); // top-right Share, not the chat artifact card
   await expect(menu.locator('.chrome-publish-url')).toHaveText(url);
   await save(page,'G2','G2');
   await more.click();
@@ -123,7 +129,7 @@ test('capture isolated OD share entry, progress and failure states',async({page}
   await save(page,'S9','S9');
   let reopen!:()=>void;const reopening=new Promise<void>(res=>{reopen=res;});
   let markRequestStarted!:()=>void;const requestStarted=new Promise<void>(res=>{markRequestStarted=res;});
-  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='POST')return r.continue();markRequestStarted();await reopening;await r.fulfill({json:{url,slug:'ui-audit-link',fileName:'index.html'}});});
+  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='POST')return r.continue();markRequestStarted();await reopening;await r.fulfill({json:publishedFixture('ui-audit-link',url)});});
   await menu.getByRole('menuitem').filter({hasText:/生成并复制链接|Generate and copy|重新开启|Resume/}).first().click();
   try {await requestStarted;await save(page,'S9-R','S9-R');}finally{reopen();}
   await expect(menu.locator('.chrome-publish-url')).toHaveText(url);
@@ -525,7 +531,7 @@ test('capture isolated team share menu and access choices',async({page})=>{
   await save(page,'S1-T2','S1-T2',{mockWorkspaceType:team.workspaceType});
   await page.keyboard.press('Escape');
   const url=`https://example.test/artifact/${projectId}/team-link`;
-  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,r=>r.request().method()==='POST'?r.fulfill({json:{url,slug:'team-link',fileName:'index.html'}}):r.fallback());
+  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,r=>r.request().method()==='POST'?r.fulfill({json:publishedFixture('team-link',url)}):r.fallback());
   await menu.getByRole('menuitem').filter({hasText:/链接|复制/}).first().click();
   await expect(menu.locator('.chrome-publish-url')).toHaveText(url);
   await save(page,'S4-T','S4-T',{mockWorkspaceType:team.workspaceType});
