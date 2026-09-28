@@ -218,6 +218,43 @@ process.exit(0);
     );
   });
 
+  it('turns OpenCode generic server errors into actionable CLI upgrade guidance', async () => {
+    await withFakeAgent(
+      'opencode',
+      `
+console.log(JSON.stringify({
+  type: 'error',
+  error: {
+    name: 'UnknownError',
+    data: {
+      message: 'Unexpected server error. Check server logs for details.',
+      ref: 'err_fixture',
+    },
+  },
+}));
+process.exit(0);
+`,
+      async () => {
+        const response = await fetch(`${baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'opencode',
+            message: 'hello',
+          }),
+        });
+        const body = await response.text();
+
+        expect(response.ok).toBe(true);
+        expect(body).toContain('AGENT_EXECUTION_FAILED');
+        expect(body).toContain('OpenCode failed before producing a response');
+        expect(body).toContain('opencode run');
+        expect(body).toContain('opencode upgrade');
+        expect(body).toContain('SQLite');
+        expect(body).toContain('"status":"failed"');
+      },
+    );
+  });
 
   it('reuses an existing assistant message row instead of creating a duplicate when assistantMessageId is supplied', async () => {
     if (!process.env.OD_DATA_DIR) {

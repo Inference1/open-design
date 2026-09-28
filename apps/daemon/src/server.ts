@@ -3279,6 +3279,18 @@ function rewriteKnownAgentStreamError(agentId, message, failureText = '') {
   ) {
     return 'The run failed due to an unknown upstream streaming error. Please retry.';
   }
+  if (
+    agentId === 'opencode' &&
+    /unexpected server error\.\s*check server logs for details\.?/i.test(rawMessage) &&
+    /"name"\s*:\s*"UnknownError"/i.test(combined)
+  ) {
+    return (
+      'OpenCode failed before producing a response. This generic error can hide a local ' +
+      'OpenCode startup or SQLite migration failure. In a terminal, run `opencode --version` ' +
+      'and `opencode run "Say hello"` to reveal the underlying error. If that reports a SQLite ' +
+      'schema error, run `opencode upgrade`, verify the headless command succeeds, and retry here.'
+    );
+  }
   return rawMessage;
 }
 
