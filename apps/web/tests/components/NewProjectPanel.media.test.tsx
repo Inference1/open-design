@@ -109,6 +109,43 @@ describe('NewProjectPanel media provider badges', () => {
     );
   });
 
+  it('uses a configured MiniMax provider as the default image route', async () => {
+    const onCreate = vi.fn();
+    render(
+      <NewProjectPanel
+        skills={[]}
+        designSystems={[]}
+        defaultDesignSystemId={null}
+        templates={[]}
+        onDeleteTemplate={vi.fn()}
+        promptTemplates={[]}
+        onCreate={onCreate}
+        mediaProviders={{
+          minimax: { apiKey: 'test-key', baseUrl: '', model: 'image-01' },
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Media' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Image' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('model-picker-trigger').textContent).toContain('image-01');
+    });
+    fireEvent.change(screen.getByTestId('new-project-name'), {
+      target: { value: 'MiniMax default image' },
+    });
+    fireEvent.click(screen.getByTestId('create-project'));
+
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          kind: 'image',
+          imageModel: 'minimax-image-01',
+        }),
+      }),
+    );
+  });
+
   it('treats a legacy template gpt-image-2 recommendation as the managed Cloud route', async () => {
     const template = {
       id: 'legacy-gpt-image-template',

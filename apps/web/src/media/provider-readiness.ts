@@ -3,8 +3,30 @@ import type { MediaProviderCredentials } from '../types';
 import {
   findMediaModel,
   findProvider,
+  type MediaModel,
   type MediaProviderId,
 } from './models';
+
+/**
+ * Put models backed by a configured provider first without dropping the
+ * catalogue fallback. Composer callers use the first route as their default,
+ * so a configured MiniMax image provider is selected instead of the managed
+ * Cloud image fallback while the picker remains free to choose another route.
+ */
+export function prioritizeConfiguredMediaModels(
+  models: readonly MediaModel[],
+  mediaProviders?: Record<string, MediaProviderCredentials>,
+): MediaModel[] {
+  if (mediaProviders === undefined) return [...models];
+  return models
+    .map((model, index) => ({
+      model,
+      index,
+      configured: isStoredMediaProviderEntryPresent(mediaProviders[model.provider]),
+    }))
+    .sort((a, b) => Number(b.configured) - Number(a.configured) || a.index - b.index)
+    .map(({ model }) => model);
+}
 
 export function isMediaProviderPickerReady(
   providerId: MediaProviderId,

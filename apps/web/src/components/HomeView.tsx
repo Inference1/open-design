@@ -72,6 +72,7 @@ import {
 } from '../i18n/content';
 import { fetchElevenLabsVoiceOptions } from '../providers/elevenlabs-voices';
 import { IMAGE_MODELS } from '../media/models';
+import { prioritizeConfiguredMediaModels } from '../media/provider-readiness';
 import {
   mergeAihubmixImageModels,
   useAIHubMixImageModels,
@@ -90,6 +91,7 @@ import type {
   ProjectMetadata,
   PromptTemplateSummary,
   SkillSummary,
+  MediaProviderCredentials,
 } from '../types';
 import { inlineMentionToken, mentionTokenPresent } from '../utils/inlineMentions';
 import { smoothScrollToTop } from '../utils/smoothScrollToTop';
@@ -295,6 +297,8 @@ interface Props {
   skillsLoading?: boolean;
   connectors?: ConnectorDetail[];
   promptTemplates?: PromptTemplateSummary[];
+  /** Used to make a configured image provider the default composer route. */
+  mediaProviders?: Record<string, MediaProviderCredentials>;
   // Personalized first-run starting point (spec §7). Null unless the user just
   // finished the About-you survey this session; EntryShell owns the state.
   // Accepted for API compatibility but no longer rendered — see
@@ -513,6 +517,7 @@ export function HomeView({
   skillsLoading = false,
   connectors = EMPTY_CONNECTORS,
   promptTemplates = EMPTY_PROMPT_TEMPLATES,
+  mediaProviders,
   recommendation = null,
   onRecommendationStart,
   onRecommendationDismiss,
@@ -833,8 +838,11 @@ export function HomeView({
   // picker (replaces the static aihubmix seeds when the fetch resolves).
   const aihubmixImageModels = useAIHubMixImageModels();
   const composerImageModels = useMemo(
-    () => mergeAihubmixImageModels(IMAGE_MODELS, aihubmixImageModels),
-    [aihubmixImageModels],
+    () => prioritizeConfiguredMediaModels(
+      mergeAihubmixImageModels(IMAGE_MODELS, aihubmixImageModels),
+      mediaProviders,
+    ),
+    [aihubmixImageModels, mediaProviders],
   );
   const [elevenLabsVoicesLoaded, setElevenLabsVoicesLoaded] = useState(false);
   const [elevenLabsVoicesError, setElevenLabsVoicesError] = useState<string | null>(null);
