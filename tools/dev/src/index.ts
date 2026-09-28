@@ -71,7 +71,6 @@ import {
 import { rewriteCliArgsForDefaultStart } from "./cli-args.js";
 import { ensureDaemonGateForDesktop } from "./desktop-auth-gate.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
-import { resolveToolsDevShareViewerEnv } from "./share-viewer.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
 
 type CliOptions = ToolDevOptions & {
@@ -430,8 +429,6 @@ async function spawnDaemonRuntime(
         ...(webPort == null ? {} : { [SIDECAR_ENV.WEB_PORT]: String(webPort) }),
         ...(options.parentPid == null ? {} : { [TOOLS_DEV_PARENT_PID_ENV]: String(options.parentPid) }),
         ...(spawnOptions.requireDesktopAuth ? { OD_REQUIRE_DESKTOP_AUTH: "1" } : {}),
-        // Default share Viewer origin for local development; env overrides it.
-        ...resolveToolsDevShareViewerEnv(process.env),
       },
       logHandle,
       ...(spawnOptions.restart === undefined ? {} : { restart: spawnOptions.restart }),

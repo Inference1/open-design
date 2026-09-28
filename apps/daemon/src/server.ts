@@ -1083,7 +1083,7 @@ import { createCommentAlignmentService, runVelaCommentAlignment } from './collab
 import { registerCommentAlignmentRoutes } from './routes/project/comments.js';
 import { createShareAliasReservations } from './collab/share-alias-reservation.js';
 import { createSharePublicationCompletion } from './collab/share-publication-completion.js';
-import { resolvePublicShareViewerUrl } from './collab/public-share-viewer-url.js';
+import { resolvePublicShareLink } from './collab/public-share-viewer-url.js';
 import { ensurePublicShareProject } from './collab/public-share-project-bootstrap.js';
 import { createVelaProjectShareState } from './collab/vela-project-share-state.js';
 import { registerPublicFileStopRetryRoutes } from './routes/public-file-stop-retry.js';
@@ -5351,7 +5351,7 @@ export async function startServer({
     resolveLocalPublicShareOwner: resolveLocalProjectOwner,
     isPrivateTeamProjectOfCreator: (projectId, principal) => isPrivateTeamProjectOfCreator(db, projectId, principal),
     markPublishedTeamProjectVisible: (projectId, principal) => markPublishedTeamProjectVisible(db, projectId, principal),
-    resolvePublicShareLink: (projectId, slug) => resolvePublicShareViewerUrl(projectId, slug, process.env, configuredAmrEnv()),
+    resolvePublicShareLink: (projectId, slug, amr) => resolvePublicShareLink(projectId, slug, amr, process.env, configuredAmrEnv()),
     sharePublishing: {
       ensureProject: (scope, principal, run) => ensurePublicShareProject({
         projectId: scope.projectId, principal, run, describeProject: describeCollabProject,
@@ -5364,20 +5364,19 @@ export async function startServer({
       reservations: createShareAliasReservations(db),
       outbox: shareBindingOutbox,
       complete: createSharePublicationCompletion(db, recordPublicFilePublication, shareBindingOutbox, true),
-      prepare: async (scope, slug) => {
+      prepare: async scope => {
         const identity = Object.freeze({ ...scope });
         const configuredEnv = { ...configuredAmrEnv() };
         const currentSession = readVelaControlApiContext(process.env, configuredEnv);
         if (!currentSession?.controlKey || !currentSession.apiUrl) throw new Error('PUBLIC_SHARE_SESSION_UNAVAILABLE');
         const session = Object.freeze({ ...currentSession });
-        const url = resolvePublicShareViewerUrl(identity.projectId, slug, process.env, configuredEnv);
         const directory = await fetchVelaWorkspaceDirectory({ readSession: () => session });
         if (!directory.ok || !directory.items.some(item => item.workspaceId === identity.resourceTeamId
           && item.workspaceMemberId === identity.ownerMemberId && item.memberStatus === 'active'
           && item.lifecycleState !== 'deleted' && item.lifecycleState !== 'deleting')) {
           throw new Error('PUBLIC_SHARE_IDENTITY_UNAVAILABLE');
         }
-        return { url, run: args => runPinnedVelaCommand({ args, session,
+        return { run: args => runPinnedVelaCommand({ args, session,
           workspaceId: identity.resourceTeamId, dataRoot: RUNTIME_DATA_DIR, configuredEnv }) };
       },
       retry: () => {

@@ -6,6 +6,7 @@ import type { createSharePublicationCompletion } from '../collab/share-publicati
 import type { ShareBindingOutbox } from '../collab/share-binding-outbox.js';
 import type { runVelaCommand } from '../integrations/vela-command.js';
 import { sharePublishResponse } from '../collab/share-publish-response.js';
+import { persistedAmrShareUrl, type AmrShareLink, type PublicShareLink } from '../collab/public-share-viewer-url.js';
 import { stopVelaShare } from '../collab/vela-share-stop.js';
 import { publicFileResourceIdFor } from '../collab/public-file-resource-id.js';
 import { resumePendingShareBinding } from '../collab/resume-pending-share-binding.js';
@@ -67,6 +68,7 @@ import {
 import {
   createInMemoryPublicFilePublicationStore,
   type PublicFilePublication,
+  type StopQueuePublicFilePublicationStore,
   type PublicFilePublicationScope,
   type PublicFilePublicationStore,
 } from '../collab/public-file-publication-store.js';
@@ -247,16 +249,18 @@ export interface RegisterCollabSyncRoutesDeps {
   /** Record a creator's private project as team-visible once publishing has
    * registered it in a team catalog. True when the row is the creator's team row afterwards. */
   markPublishedTeamProjectVisible?: (projectId: string, principal: ResourceHubPrincipal) => boolean;
-  /** The only source of a publication's Viewer address on read; `null` when
-   * no Viewer origin is configured. Unwired means unavailable, never the stored URL. */
-  resolvePublicShareLink?: (projectId: string, slug: string) => string | null;
+  /** The only presentation rule for a publication's Viewer address: explicit
+   * local override, else the address AMR reported (fresh evidence or the
+   * persisted copy, re-verified), else unavailable. Unwired means unavailable,
+   * never the stored URL. */
+  resolvePublicShareLink?: (projectId: string, slug: string, amr: AmrShareLink | string | null) => PublicShareLink;
   recordPublicFilePublication?: RecordPublicFilePublication;
   sharePublishing?: {
     ensureProject?(scope: PublicFilePublicationScope, principal: ResourceHubPrincipal, run: typeof runVelaCommand): Promise<TeamProject>;
     reservations: ReturnType<typeof createShareAliasReservations>;
     outbox: ShareBindingOutbox;
     complete: ReturnType<typeof createSharePublicationCompletion>;
-    prepare(scope: PublicFilePublicationScope, slug: string): Promise<{ run: typeof runVelaCommand; url: string | null }>;
+    prepare(scope: PublicFilePublicationScope, slug: string): Promise<{ run: typeof runVelaCommand }>;
     retry(): void;
   };
   publicFileMutations?: PublicFileMutations;
@@ -712,17 +716,19 @@ function sendWorkspaceVerificationFailure(
 
 /** A row whose alias cannot form a Viewer address (for example a pre-alias
  * slug) is still a live publication the owner must be able to see and stop,
- * so an identity fault on read degrades to "link unavailable", not a 503. */
-function publicShareLinkOrNull(
-  resolve: ((projectId: string, slug: string) => string | null) | undefined,
+ * so any fault here degrades to "link unavailable", never an error. */
+function presentPublicShareLink(
+  resolve: RegisterCollabSyncRoutesDeps['resolvePublicShareLink'],
   projectId: string,
   slug: string,
-): string | null {
-  if (!resolve) return null;
+  amr: AmrShareLink | string | null,
+): PublicShareLink {
+  const unavailable = { url: null, code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' as const };
+  if (!resolve) return unavailable;
   try {
-    return resolve(projectId, slug);
+    return resolve(projectId, slug, amr);
   } catch {
-    return null;
+    return unavailable;
   }
 }
 
@@ -1392,7 +1398,10 @@ export function registerCollabSyncRoutes(
       ? previousState.publications.find(item => item.sourceFilePath === filePath && item.status === 'stopped')?.slug
       : undefined;
     const resumed = await resumePendingShareBinding(scope, publicFilePublicationStore, publisher.outbox, prepared.run, stoppedSlug);
-    if (resumed) return res.json(withVisibility(sharePublishResponse(resumed, prepared.url)));
+    if (resumed) {
+      return res.json(withVisibility(sharePublishResponse(resumed,
+        presentPublicShareLink(deps.resolvePublicShareLink, projectId, resumed.receipt.slug, resumed.amrLink ?? null))));
+    }
     const resourceId = publicFileResourceIdFor(scope);
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'od-public-file-'));
     let stage: 'push' | 'snapshot' | 'persist' = 'push';
@@ -1428,8 +1437,11 @@ export function registerCollabSyncRoutes(
         scope, resourceId, versionId, entryPath: sharePlan.entryPath,
         name: path.basename(filePath),
       }, publisher.reservations, prepared.run);
+      // Persist only the address AMR reported (verified); an override is a
+      // presentation choice and is re-applied on every read instead.
+      let amrLink = result.amrLink ?? null;
       const publication: PublicFilePublication = {
-        url: prepared.url, slug: result.receipt.slug, fileName: filePath,
+        url: persistedAmrShareUrl(amrLink), slug: result.receipt.slug, fileName: filePath,
       };
       let outcome: ReturnType<typeof publisher.complete>;
       stage = 'persist';
@@ -1446,18 +1458,24 @@ export function registerCollabSyncRoutes(
             return res.status(502).json(withVisibility({ error: 'PUBLIC_FILE_PUBLISH_UNAVAILABLE', failure }));
           } catch { /* Remote publication may still be accessible: never hide it. */ }
         }
+        const manualUrl = presentPublicShareLink(deps.resolvePublicShareLink, projectId, result.receipt.slug, amrLink).url;
         return res.status(502).json(withVisibility({ error: {
           code: 'PUBLIC_FILE_MANUAL_REVOKE_REQUIRED',
-          message: `Publication metadata could not be saved; the public share may remain accessible${prepared.url ? ` at ${prepared.url}` : ''}. Use od project share stop to revoke it explicitly.`,
-          data: { ...publication, projectId, receipt: result.receipt },
+          message: `Publication metadata could not be saved; the public share may remain accessible${manualUrl ? ` at ${manualUrl}` : ''}. Use od project share stop to revoke it explicitly.`,
+          data: { ...publication, url: manualUrl, projectId, receipt: result.receipt },
         } }));
       }
       // Register/bind must never revive a stopped link. This foreground owner
       // request alone carries explicit resume intent for the observed alias.
       if (outcome.status === 'binding_pending' && stoppedSlug === outcome.receipt.slug) {
-        outcome = await resumePendingShareBinding(scope, publicFilePublicationStore, publisher.outbox, prepared.run, stoppedSlug) ?? outcome;
+        const resumedOutcome = await resumePendingShareBinding(scope, publicFilePublicationStore, publisher.outbox, prepared.run, stoppedSlug);
+        if (resumedOutcome) {
+          outcome = resumedOutcome;
+          amrLink = resumedOutcome.amrLink ?? amrLink;
+        }
       }
-      const response = sharePublishResponse(outcome, prepared.url);
+      const response = sharePublishResponse(outcome,
+        presentPublicShareLink(deps.resolvePublicShareLink, projectId, outcome.receipt.slug, amrLink));
       if (response.status === 'binding_pending' && response.binding.retrying) {
         try { publisher.retry(); }
         catch { response.binding = { retrying: false, code: 'SHARE_BINDING_RETRY_UNAVAILABLE' }; }
@@ -1566,7 +1584,13 @@ export function registerCollabSyncRoutes(
     if (!context || !principal) return res.status(409).json(workspaceIdentityRequiredBody());
     if (!deps.readProjectShareState) return res.status(503).json({ error: 'SHARE_STATE_UNAVAILABLE' });
     try {
-      return res.json(await deps.readProjectShareState({ projectId, resourceTeamId: principal.teamId, ownerMemberId: principal.memberId }));
+      const state = await deps.readProjectShareState({ projectId, resourceTeamId: principal.teamId, ownerMemberId: principal.memberId });
+      // The history DTO names lifecycle only; addresses go through the file read.
+      const response: import('@open-design/contracts').ProjectShareHistoryResponse = {
+        projectId: state.projectId, bindingExists: state.bindingExists, hasEverShared: state.hasEverShared,
+        publications: state.publications.map(({ sourceFilePath, slug, status }) => ({ sourceFilePath, slug, status })),
+      };
+      return res.json(response);
     } catch {
       return res.status(503).json({ error: 'SHARE_STATE_UNAVAILABLE' });
     }
@@ -1621,30 +1645,60 @@ export function registerCollabSyncRoutes(
       }
     }
     if (!deps.readProjectShareState) return res.status(503).json({ error: 'SHARE_STATE_UNAVAILABLE' });
+    type FilePublicShareResponse = import('@open-design/contracts').ProjectFilePublicShareResponse;
+    // A stored `url` is the last AMR address; it only ever reaches a response
+    // through the link rule, which re-verifies it (a legacy console URL fails).
+    const present = (record: PublicFilePublication, amr: AmrShareLink | string | null): Pick<FilePublicShareResponse, 'publication' | 'link' | 'slug'> => {
+      const link = presentPublicShareLink(deps.resolvePublicShareLink, projectId, record.slug, amr);
+      return link.url !== null
+        ? { publication: { ...record, url: link.url } }
+        : { publication: null, link: { status: 'unavailable', code: link.code }, slug: record.slug };
+    };
+    let history: Awaited<ReturnType<ReadProjectShareState>>;
     try {
-      const history = await deps.readProjectShareState(scope);
-      const remote = history.publications.find(item => item.sourceFilePath === filePath);
+      history = await deps.readProjectShareState(scope);
+    } catch {
+      // The lifecycle source did not answer (offline, signed out, AMR down).
+      // A persisted publication is still the best-known link: show it, marked
+      // stale, so the panel keeps working offline. Without one there is
+      // nothing to say — a request that did not answer is not "none".
       const local = publicFilePublicationStore.get(scope);
-      // A row that outlived a stop made elsewhere is not a live publication:
-      // the owner should see the stopped state (and resume), not a dead link.
-      const live = local && remote && local.slug === remote.slug && remote.status !== 'stopped' ? local : null;
-      // The Viewer resolver is the only source of the address. A persisted
-      // `local.url` may predate the Viewer cut-over (a console address), so it
-      // only witnesses the slug and is never echoed back.
-      const liveUrl = live ? publicShareLinkOrNull(deps.resolvePublicShareLink, projectId, live.slug) : null;
-      const response: import('@open-design/contracts').ProjectFilePublicShareResponse = {
-        publication: live && liveUrl !== null ? { ...live, url: liveUrl } : null,
-        ...(live && liveUrl === null
-          ? { link: { status: 'unavailable' as const, code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' as const }, slug: live.slug }
-          : {}),
-        status: remote?.status ?? 'none',
-        freshness,
+      // A queued stop means the owner already asked to end this share: never
+      // offer its link as live, even as a stale best guess.
+      const stopPending = local && 'listStops' in publicFilePublicationStore
+        && (publicFilePublicationStore as StopQueuePublicFilePublicationStore).listStops().some(stop =>
+          stop.resourceTeamId === scope.resourceTeamId && stop.ownerMemberId === scope.ownerMemberId
+          && stop.projectId === scope.projectId && stop.filePath === scope.filePath && stop.slug === local.slug);
+      if (!local || stopPending) return res.status(503).json({ error: 'SHARE_STATE_UNAVAILABLE' });
+      const response: FilePublicShareResponse = {
+        ...present(local, local.url), status: 'active', freshness, stale: true,
       };
       return res.json(response);
-    } catch {
-      // A failed lifecycle read must not erase the caller's previously known link.
-      return res.status(503).json({ error: 'SHARE_STATE_UNAVAILABLE' });
     }
+    const remote = history.publications.find(item => item.sourceFilePath === filePath);
+    let local = publicFilePublicationStore.get(scope);
+    // A row that outlived a stop made elsewhere is not a live publication:
+    // the owner should see the stopped state (and resume), not a dead link.
+    const live = local && remote && local.slug === remote.slug && remote.status !== 'stopped';
+    if (local && remote && live && remote.amrLink) {
+      // Every successful status read refreshes the persisted AMR address, so a
+      // legacy stored console URL is replaced on the first online read and a
+      // changed share-shell origin is picked up without republishing.
+      const url = persistedAmrShareUrl(remote.amrLink);
+      if (local.url !== url) {
+        try {
+          if (publicFilePublicationStore.updateLink(scope, local.slug, url)) local = { ...local, url };
+        } catch {
+          console.warn('[od] share link persistence unavailable');
+        }
+      }
+    }
+    const response: FilePublicShareResponse = {
+      ...(local && live ? present(local, remote?.amrLink ?? local.url) : { publication: null }),
+      status: remote?.status ?? 'none',
+      freshness,
+    };
+    return res.json(response);
   });
 
   app.post('/api/projects/:id/collab/sync-intent', async (req, res) => {

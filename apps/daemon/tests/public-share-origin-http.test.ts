@@ -11,7 +11,7 @@ import { registerCollabSyncRoutes } from '../src/routes/collab-sync.js';
 import { migratePublicFilePublications, createSqlitePublicFilePublicationStore } from '../src/collab/public-file-publication-store.js';
 import { migrateCommentRelayOutbox } from '../src/collab/comment-relay-outbox.js';
 import { createShareBindingOutbox } from '../src/collab/share-binding-outbox.js';
-import { resolvePublicShareViewerUrl } from '../src/collab/public-share-viewer-url.js';
+import { resolvePublicShareLink } from '../src/collab/public-share-viewer-url.js';
 import { createPublicSharePublishingFixture, fixtureShareSlug } from './public-share-publishing-fixture.js';
 
 function assertJsonObject(value: unknown): asserts value is Record<string, unknown> {
@@ -53,7 +53,7 @@ for (const scenario of cases) it.each([false, true])(`${scenario.name}: HTTP pub
     verifyWorkspaceRequest: async () => context, resolveSharedProject: async projectId => ({ projectId, ownerMemberId: 'owner', sharedAt: new Date(1).toISOString() }),
     resolveProjectDir: () => root,
     // Production wiring: the resolver reads current configuration on every GET.
-    resolvePublicShareLink: (projectId, slug) => recoveredUrl ?? resolvePublicShareViewerUrl(projectId, slug, scenario.env, scenario.configuredEnv),
+    resolvePublicShareLink: (projectId, slug, amr) => recoveredUrl ? { url: recoveredUrl } : resolvePublicShareLink(projectId, slug, amr, scenario.env, scenario.configuredEnv),
     readProjectShareState: async () => ({ projectId: 'p', bindingExists: true, hasEverShared: true, publications: [{ sourceFilePath: 'index.html', slug: fixtureShareSlug, status: 'active' }] }),
   });
   const server = createServer(app);
@@ -78,7 +78,9 @@ for (const scenario of cases) it.each([false, true])(`${scenario.name}: HTTP pub
     expect(createShareBindingOutbox(db).list()).toHaveLength(pending ? 1 : 0);
     if (pending) expect(body.binding).toMatchObject({ retrying: true });
     const revision = store.getRevision(scope); expect(revision?.token).toBeTruthy();
-    expect(store.get(scope)?.url).toBe(scenario.available ? `https://viewer.example.test/artifact/p/${fixtureShareSlug}` : null);
+    // Only an AMR-reported address is persisted; the env override is applied
+    // on every read instead (this synthetic AMR reports none).
+    expect(store.get(scope)?.url).toBeNull();
     const read = await fetch(url); const readBody = await read.json(); assertJsonObject(readBody);
     expect(read.status).toBe(200); expect(readBody.status).toBe('active');
     if (!scenario.available) {
@@ -184,7 +186,7 @@ it.each([
   registerCollabSyncRoutes(app, { collab: runtime, publicFilePublicationStore: store,
     verifyWorkspaceRequest: async () => context, resolveSharedProject: async projectId => ({ projectId, ownerMemberId: 'owner', sharedAt: new Date(1).toISOString() }),
     resolveProjectDir: () => root,
-    ...(wired ? { resolvePublicShareLink: (projectId: string, slug: string) => resolvePublicShareViewerUrl(projectId, slug, env) } : {}),
+    ...(wired ? { resolvePublicShareLink: (projectId: string, slug: string, amr: Parameters<typeof resolvePublicShareLink>[2]) => resolvePublicShareLink(projectId, slug, amr, env) } : {}),
     readProjectShareState: async () => ({ projectId: 'p', bindingExists: true, hasEverShared: true, publications: [{ sourceFilePath: 'index.html', slug: fixtureShareSlug, status: remoteStatus }] }),
   });
   const server = createServer(app);

@@ -7207,9 +7207,12 @@ function printProjectShareHelp() {
                     Resume sharing through the same stable-alias lifecycle as the UI.
   od project share get <id> --path <file> [--json]
                     Read the current publication (null when not published).
-                    Without a configured Viewer origin (OD_SHARE_VIEWER_URL or
-                    OD_SHARE_VIEWER_URLS) a published file reports "link
-                    temporarily unavailable" plus its slug, and no URL.
+                    The link is the address AMR reports for the share, unless
+                    OD_SHARE_VIEWER_URL / OD_SHARE_VIEWER_URLS override it
+                    locally. When there is none, a published file reports
+                    "link temporarily unavailable" plus its slug, and no URL.
+                    When AMR cannot be reached, the last known link is shown
+                    with a stale notice on stderr ("stale": true in --json).
   od project share status <id> [--path <file>] [--json]
                     Project binding history, or file lifecycle with --path.
   od project share stop <id> --path <file> --slug <slug> [--json]
@@ -7287,13 +7290,18 @@ async function runProjectShare(args) {
   }
   // Same state as the UI: a durable publication with no Viewer origin shows no
   // URL, but keeps its stable alias so the owner can still stop it.
+  if (data.stale === true) {
+    console.error('[project] notice: share status could not be refreshed; showing the last known link.');
+  }
   const unavailableSlug = data.receipt?.slug ?? data.slug;
   const unavailableHint = typeof unavailableSlug === 'string' && unavailableSlug ? ` (slug ${unavailableSlug})` : '';
+  // An alias that is not a stable share id has no Viewer address at all.
+  const unavailableText = data.link?.code === 'PUBLIC_SHARE_IDENTITY_INVALID' ? 'link unavailable for this alias' : 'link temporarily unavailable';
   if (data.status === 'binding_pending') {
-    return console.log(`Content published; binding pending.${data.link?.status === 'unavailable' ? ` Link temporarily unavailable${unavailableHint}.` : ''}`);
+    return console.log(`Content published; binding pending.${data.link?.status === 'unavailable' ? ` ${unavailableText[0].toUpperCase()}${unavailableText.slice(1)}${unavailableHint}.` : ''}`);
   }
   if (data.link?.status === 'unavailable') {
-    return console.log(`${data.status === 'stopped' ? 'Sharing stopped' : 'Published'}; link temporarily unavailable${unavailableHint}.`);
+    return console.log(`${data.status === 'stopped' ? 'Sharing stopped' : 'Published'}; ${unavailableText}${unavailableHint}.`);
   }
   const publication = action === 'get' ? data.publication : data;
   console.log(publication ? publication.url : 'Not published.');

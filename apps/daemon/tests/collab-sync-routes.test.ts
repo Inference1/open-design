@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { migrateCommentRelayOutbox } from '../src/collab/comment-relay-outbox.js';
 import { createShareAliasReservations } from '../src/collab/share-alias-reservation.js';
 import { createSharePublicationCompletion } from '../src/collab/share-publication-completion.js';
-import { publicShareViewerUrl, resolvePublicShareViewerUrl } from '../src/collab/public-share-viewer-url.js';
+import { publicShareViewerUrl, resolvePublicShareLink as resolveShareLink } from '../src/collab/public-share-viewer-url.js';
 import { createShareContentFingerprints } from '../src/collab/share-content-fingerprint.js';
 import { createShareBindingOutbox } from '../src/collab/share-binding-outbox.js';
 import { publishReservedVelaShareVersion } from '../src/collab/vela-share-publish.js';
@@ -317,14 +317,13 @@ async function publicShareFixture(options: {
   const record = createPublicFilePublicationRecorder(db, store, options.enqueue ?? (() => ({ enqueued: 0, skippedInbound: 0 })));
   let ids = 0;
   // Publish and read share one Viewer resolver, as server.ts wires them.
-  const resolvePublicShareLink = (projectId: string, slug: string) => resolvePublicShareViewerUrl(projectId, slug, { OD_SHARE_VIEWER_URL: 'https://web.example.test' });
+  const resolvePublicShareLink: NonNullable<RegisterCollabSyncRoutesDeps['resolvePublicShareLink']> = (projectId, slug, amr) => resolveShareLink(projectId, slug, amr, { OD_SHARE_VIEWER_URL: 'https://web.example.test' });
   const sharePublishing: NonNullable<RegisterCollabSyncRoutesDeps['sharePublishing']> = {
     reservations: createShareAliasReservations(db, () => ids++ === 0 ? fixtureSlug : randomUUID()),
     outbox,
     complete: createSharePublicationCompletion(db, record, outbox, true),
     ensureProject: async scope => ({ projectId: scope.projectId, ownerMemberId: scope.ownerMemberId, sharedAt: '2026-01-01T00:00:00.000Z' }),
     prepare: async (scope, slug) => ({
-      url: resolvePublicShareLink(scope.projectId, slug),
       run: async args => {
         if (options.run) return options.run(args);
         if (args[0] === 'resource') return runVelaResourceCommand(args.slice(1), scope.resourceTeamId);
@@ -1966,12 +1965,12 @@ describe('collab sync routes', () => {
           reservations: createShareAliasReservations(db, () => receipt.slug), outbox,
           ensureProject: async scope => ({ projectId: scope.projectId, ownerMemberId: scope.ownerMemberId, sharedAt: '2026-01-01T00:00:00.000Z' }),
           complete: createSharePublicationCompletion(db, createPublicFilePublicationRecorder(db, store, () => ({ enqueued: 0, skippedInbound: 0 })), outbox, true),
-          prepare: async (scope, slug) => ({
-            url: publicShareViewerUrl(scope.projectId, slug, { OD_SHARE_VIEWER_URL: 'https://web.example.test' }),
+          prepare: async scope => ({
             run: async args => runVelaResourceCommand(args.slice(1), scope.resourceTeamId),
           }),
           retry: vi.fn(),
         },
+        resolvePublicShareLink: (projectId, slug, amr) => resolveShareLink(projectId, slug, amr, { OD_SHARE_VIEWER_URL: 'https://web.example.test' }),
       });
       const response = await api.json('/api/projects/p1/files/index.html/publish-public', { method: 'POST' });
       expect.soft(response.status).toBe(200);

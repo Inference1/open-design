@@ -1077,6 +1077,11 @@ export interface ProjectFilePublicShareResponse {
   status: ShareStatus;
   /** From a content fingerprint comparison; `unknown` until one is available. */
   freshness: ShareContentFreshness;
+  /** Present only when the lifecycle source could not be read (for example
+   * offline): `publication` / `link` are the daemon's last persisted record and
+   * `status` is `active` because that record exists, not because the lifecycle
+   * source confirmed it. The next successful read replaces all three. */
+  stale?: true;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1662,8 +1667,20 @@ export interface SharePublishedLink {
  */
 export interface SharePublishLinkUnavailable {
   status: 'unavailable';
-  code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE';
+  code: PublicShareLinkUnavailableCode;
 }
+
+/**
+ * Why a publication has no address to show. The share address comes from AMR
+ * (its share-shell origin), or from an explicit local override:
+ *
+ * - `PUBLIC_SHARE_WEB_URL_UNAVAILABLE` — no share-shell origin is configured,
+ *   AMR has not reported an address yet, or what it reported failed the
+ *   daemon's verification.
+ * - `PUBLIC_SHARE_IDENTITY_INVALID` — the alias is not a stable share id (for
+ *   example a legacy snapshot slug), so no Viewer address exists for it.
+ */
+export type PublicShareLinkUnavailableCode = 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' | 'PUBLIC_SHARE_IDENTITY_INVALID';
 
 /** Confirmed cancellation from DELETE /api/projects/:id/files/:path/publish-public.
  * The stable alias is stopped, not erased, and can be resumed by the owner. */

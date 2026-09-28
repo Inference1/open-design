@@ -5,8 +5,15 @@ import type { PublicFilePublicationScope } from './public-file-publication-store
 import { readVelaControlApiContext } from '../integrations/vela.js';
 import { fetchVelaWorkspaceDirectory } from './vela-workspace-context.js';
 import { runPinnedVelaCommand } from './vela-pinned-command.js';
+import { parseAmrShareLink, type AmrShareLink } from './public-share-viewer-url.js';
 
-export type ReadProjectShareState = (scope: Omit<PublicFilePublicationScope, 'filePath'>) => Promise<ProjectShareHistoryResponse>;
+/** Project share history plus, per active publication, what AMR said about its
+ * address. `amrLink` is daemon-internal: HTTP responses built from this state
+ * present the link through the Viewer link rule instead of echoing it. */
+export interface ProjectShareState extends ProjectShareHistoryResponse {
+  publications: Array<ProjectShareHistoryResponse['publications'][number] & { amrLink?: AmrShareLink }>;
+}
+export type ReadProjectShareState = (scope: Omit<PublicFilePublicationScope, 'filePath'>) => Promise<ProjectShareState>;
 export function createVelaProjectShareState(options: {
   dataRoot: string;
   configuredEnv?: Record<string, string> | (() => Record<string, string>);
@@ -48,7 +55,7 @@ export function createVelaProjectShareState(options: {
 }
 
 /** Missing/unauthorized/error replies never become an empty history. */
-export function parseProjectShareState(output: string, projectId: string): ProjectShareHistoryResponse {
+export function parseProjectShareState(output: string, projectId: string): ProjectShareState {
   let value: unknown;
   try { value = JSON.parse(output); }
   catch { throw new Error('SHARE_STATE_INVALID'); }
@@ -56,7 +63,7 @@ export function parseProjectShareState(output: string, projectId: string): Proje
     || !('bindingExists' in value) || typeof value.bindingExists !== 'boolean'
     || !('publications' in value) || !Array.isArray(value.publications)) throw new Error('SHARE_STATE_INVALID');
   const seen = new Set<string>();
-  const publications = value.publications.map((item: unknown): ProjectShareHistoryResponse['publications'][number] => {
+  const publications = value.publications.map((item: unknown): ProjectShareState['publications'][number] => {
     if (!item || typeof item !== 'object' || !('sourceFilePath' in item) || typeof item.sourceFilePath !== 'string'
       || item.sourceFilePath.includes('\\') || item.sourceFilePath.includes('\0')
       || item.sourceFilePath.split('/').some(part => !part || part === '.' || part === '..')
@@ -64,7 +71,9 @@ export function parseProjectShareState(output: string, projectId: string): Proje
       || !('status' in item) || (item.status !== 'active' && item.status !== 'stopped')
       || seen.has(item.sourceFilePath)) throw new Error('SHARE_STATE_INVALID');
     seen.add(item.sourceFilePath);
-    return { sourceFilePath: item.sourceFilePath, slug: item.slug, status: item.status };
+    // Only an active publication has an address; a stopped one carries none.
+    const amrLink = item.status === 'active' ? parseAmrShareLink(item, projectId, item.slug) : null;
+    return { sourceFilePath: item.sourceFilePath, slug: item.slug, status: item.status, ...(amrLink ? { amrLink } : {}) };
   });
   if (value.bindingExists !== (publications.length > 0)) throw new Error('SHARE_STATE_INVALID');
   return { projectId, bindingExists: value.bindingExists, hasEverShared: hasEverShared({ bindingExists: value.bindingExists }), publications };

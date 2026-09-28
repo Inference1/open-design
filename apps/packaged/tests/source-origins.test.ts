@@ -29,8 +29,6 @@ const PUBLISHABLE_HOSTS = new Set([
   "localhost",
   "github.com",
   "open-design.ai",
-  // Public production share Viewer (share decision 67 #6).
-  "open-design.app",
   "us.i.posthog.com",
 ]);
 
