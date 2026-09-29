@@ -12,6 +12,7 @@ const receipt = { filePath: 'index.html', slug: publication.slug, publishedAt: 1
 const unavailableLink = { status: 'unavailable', code: 'PUBLIC_SHARE_WEB_URL_UNAVAILABLE' };
 const stoppedNotice = /The link is disabled/;
 const unavailableText = 'Published, but the share link is temporarily unavailable.';
+const reopeningText = 'Reopening…';
 const context: WorkspaceCollabContext = {
   workspaceId: 'ws', workspaceType: 'team', teamId: 'ws', workspaceMemberId: 'owner',
   role: 'owner', memberStatus: 'active', lifecycleState: 'active', billingState: 'active',
@@ -45,6 +46,7 @@ function shareRoute(options: { status: 'active' | 'stopped'; readLink?: 'availab
   let status = options.status;
   let readFailsAfterMutation = false;
   let mutated = false;
+  let heldRead: { requested: boolean; release: () => void; released: Promise<void> } | null = null;
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith('/api/integrations/vela/status')) return new Response(JSON.stringify({ loggedIn: true, loginInFlight: false, profile: 'prod', user: { id: 'owner' }, configPath: '/x' }), { status: 200 });
@@ -62,6 +64,10 @@ function shareRoute(options: { status: 'active' | 'stopped'; readLink?: 'availab
         status = 'active'; mutated = true;
         return new Response(JSON.stringify({ status: 'published', receipt, link: unavailableLink }), { status: 200 });
       }
+      if (mutated && heldRead) {
+        heldRead.requested = true;
+        await heldRead.released;
+      }
       if (mutated && readFailsAfterMutation) return new Response(JSON.stringify({ error: 'SHARE_STATE_UNAVAILABLE' }), { status: 503 });
       if (status === 'active' && options.readLink === 'unavailable') {
         return new Response(JSON.stringify({ publication: null, link: unavailableLink, slug: publication.slug, status, freshness: 'unknown' }), { status: 200 });
@@ -72,7 +78,18 @@ function shareRoute(options: { status: 'active' | 'stopped'; readLink?: 'availab
     return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
   });
   vi.stubGlobal('fetch', fetch);
-  return { fetch, failReadsAfterMutation: () => { readFailsAfterMutation = true; } };
+  return {
+    fetch,
+    failReadsAfterMutation: () => { readFailsAfterMutation = true; },
+    /** Keeps the read that follows a mutation unanswered until `release()`. */
+    holdReadsAfterMutation: () => {
+      let release = () => {};
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      const held = { requested: false, release, released };
+      heldRead = held;
+      return held;
+    },
+  };
 }
 function writes(fetch: ReturnType<typeof vi.fn>, method: 'POST' | 'DELETE') {
   return fetch.mock.calls.filter(([url, init]) => String(url).includes('publish-public') && init?.method === method);
@@ -135,4 +152,31 @@ it.each([
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.queryByText(/Could not create the share link/i)).toBeNull();
   expect(screen.queryByText(publication.url)).toBeNull();
+});
+
+it.each([
+  ['a link', 'available', false, publication.url],
+  ['no link', 'unavailable', false, unavailableText],
+  ['a failure', 'available', true, unavailableText],
+] as const)('a resumed share stays busy, not "link unavailable", until its re-read settles with %s', async (_label, readLink, readFails, settledText) => {
+  const route = shareRoute({ status: 'stopped', readLink });
+  if (readFails) route.failReadsAfterMutation();
+  const reRead = route.holdReadsAfterMutation();
+  const linkAccess = await openStoppedSharePanel();
+  await act(async () => fireEvent.click(linkAccess));
+  await waitFor(() => expect(writes(route.fetch, 'POST')).toHaveLength(1));
+  await waitFor(() => expect(reRead.requested).toBe(true));
+  await act(async () => { await Promise.resolve(); });
+
+  expect(screen.queryByText(unavailableText)).toBeNull();
+  expect(screen.getByText(reopeningText)).toBeVisible();
+  expect(screen.queryByRole('alert')).toBeNull();
+
+  await act(async () => reRead.release());
+
+  expect(await screen.findByText(settledText)).toBeVisible();
+  await waitFor(() => expect(screen.queryByText(reopeningText)).toBeNull());
+  expect(linkAccess).toHaveAttribute('aria-checked', 'true');
+  expect(screen.queryByText(stoppedNotice)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
 });

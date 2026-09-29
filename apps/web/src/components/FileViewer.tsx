@@ -8029,30 +8029,35 @@ function HtmlViewer({
    * the panel never waits for its next open to learn it. A publish that answered
    * without a link re-reads the state once, and a read that fails or has no link
    * either leaves the publication standing as "link unavailable".
+   *
+   * The panel reports "link unavailable" only after that re-read has settled
+   * without a link. Until then the mutation is still in progress: nothing is
+   * written, and the caller stays busy on the returned promise.
    */
-  function settlePublicShareAfterMutation(
+  async function settlePublicShareAfterMutation(
     outcome: { status: 'stopped' } | { status: 'active'; link: WebPublicFileShareLink },
     requestSeq: number,
-  ) {
-    setFileShareStatus(outcome.status);
+  ): Promise<void> {
     if (outcome.status === 'stopped') {
+      setFileShareStatus('stopped');
       setFileShareFreshness('unknown');
       setPublishedFileUrl('');
       setPublishedFileSlug('');
       onObservedPublicShareLink?.(null);
       return;
     }
+    let reRead: ProjectFilePublicShareResponse | null = null;
+    if (!outcome.link.url) {
+      reRead = await fetchProjectFilePublicShareState(projectId, file.name, workspaceContext)
+        .catch(() => null);
+      const current = publicFileIdentityRef.current;
+      if (publicFileRequestSeqRef.current !== requestSeq
+        || current.projectId !== projectId || current.fileName !== file.name) return;
+    }
+    setFileShareStatus('active');
     setPublishedFileUrl(outcome.link.url ?? '');
     setPublishedFileSlug(outcome.link.slug);
-    if (outcome.link.url) return;
-    void fetchProjectFilePublicShareState(projectId, file.name, workspaceContext)
-      .then((state) => {
-        const current = publicFileIdentityRef.current;
-        if (publicFileRequestSeqRef.current !== requestSeq
-          || current.projectId !== projectId || current.fileName !== file.name) return;
-        applyPublicShareStateRead(state);
-      })
-      .catch(() => {});
+    if (reRead) applyPublicShareStateRead(reRead);
   }
 
   async function publishCurrentFilePublic(mode?: 'resume') {
@@ -8097,7 +8102,14 @@ function HtmlViewer({
       ) {
         return;
       }
-      settlePublicShareAfterMutation({ status: 'active', link: response }, requestSeq);
+      await settlePublicShareAfterMutation({ status: 'active', link: response }, requestSeq);
+      if (
+        publicFileRequestSeqRef.current !== requestSeq ||
+        publicFileIdentityRef.current.projectId !== requestProjectId ||
+        publicFileIdentityRef.current.fileName !== requestFileName
+      ) {
+        return;
+      }
       if (response.madeTeamVisible) setShareAccess('workspace');
       clearPublicFileProgressTimers();
       setPublishProgress(boundedPublishProgress(0, true));
@@ -8308,7 +8320,7 @@ function HtmlViewer({
       ) {
         return;
       }
-      settlePublicShareAfterMutation({ status: 'stopped' }, requestSeq);
+      void settlePublicShareAfterMutation({ status: 'stopped' }, requestSeq);
       confirmedStop = { sourceFilePath: requestFileName, accountScope: requestAccountScope, generation: requestAccountGeneration };
     } catch (error) {
       console.warn('[FileViewer] failed to unpublish public file', error);
