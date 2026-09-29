@@ -42,6 +42,7 @@ import {
   type CollabMemberRole,
   type AgentInfo,
   type ProjectFileVersion,
+  type ProjectFilePublicShareResponse,
   type SocialShareRequest,
   type SocialShareResponse,
   type ShareContentFreshness,
@@ -170,6 +171,7 @@ import {
   type WebDeploymentInfo,
   type WebDeployProjectFileResponse,
   type WebDeployProviderId,
+  type WebPublicFileShareLink,
   type WebUpdateDeployConfigRequest,
   type ProjectPreviewBaseScope,
   writeProjectTextFile,
@@ -7877,6 +7879,33 @@ function HtmlViewer({
     invalidatePublicFileCopy();
   }, []);
 
+  // The one way a share-state read lands in this viewer's share state.
+  function applyPublicShareStateRead(state: ProjectFilePublicShareResponse) {
+    setFileShareStatus(state.status ?? null);
+    setFileShareFreshness(state.freshness ?? 'unknown');
+    const knownLink = publicFileShareLinkFromRead(state);
+    // Missing local metadata is not proof a live remote link was stopped.
+    if (state.status === 'stopped') {
+      onObservedPublicShareLink?.(null);
+      // A confirmed remote stop outranks a previously known local URL.
+      // An unavailable read is not a confirmed stop and keeps the link.
+      setPublishedFileUrl('');
+      setPublishedFileSlug('');
+    } else if (knownLink) {
+      // A live publication without a Viewer address keeps its slug so the
+      // owner can still stop it; only a real URL is observable as a link.
+      setPublishedFileUrl(knownLink.url ?? '');
+      setPublishedFileSlug(knownLink.slug);
+      if (state.status === 'active' && workspaceContext && sourceAuthorizationScopeKey
+        && state.publication?.url && state.publication.slug) {
+        onObservedPublicShareLink?.({ status: 'active', projectId, filePath: file.name,
+          slug: state.publication.slug, url: state.publication.url,
+          workspaceId: workspaceContext.workspaceId, workspaceMemberId: workspaceContext.workspaceMemberId,
+          authorizationScopeKey: sourceAuthorizationScopeKey, freshness: state.freshness ?? 'unknown' });
+      }
+    }
+  }
+
   useEffect(() => {
     clearPublicFileProgressTimers();
     setPublishProgress(null);
@@ -7914,29 +7943,7 @@ function HtmlViewer({
         const current = publicFileIdentityRef.current;
         if (cancelled || publicFileRequestSeqRef.current !== requestSeq
           || current.projectId !== projectId || current.fileName !== file.name) return;
-        setFileShareStatus(state.status ?? null);
-        setFileShareFreshness(state.freshness ?? 'unknown');
-        const knownLink = publicFileShareLinkFromRead(state);
-        // Missing local metadata is not proof a live remote link was stopped.
-        if (state.status === 'stopped') {
-          onObservedPublicShareLink?.(null);
-          // A confirmed remote stop outranks a previously known local URL.
-          // An unavailable read is not a confirmed stop and keeps the link.
-          setPublishedFileUrl('');
-          setPublishedFileSlug('');
-        } else if (knownLink) {
-          // A live publication without a Viewer address keeps its slug so the
-          // owner can still stop it; only a real URL is observable as a link.
-          setPublishedFileUrl(knownLink.url ?? '');
-          setPublishedFileSlug(knownLink.slug);
-          if (state.status === 'active' && workspaceContext && sourceAuthorizationScopeKey
-            && state.publication?.url && state.publication.slug) {
-            onObservedPublicShareLink?.({ status: 'active', projectId, filePath: file.name,
-              slug: state.publication.slug, url: state.publication.url,
-              workspaceId: workspaceContext.workspaceId, workspaceMemberId: workspaceContext.workspaceMemberId,
-              authorizationScopeKey: sourceAuthorizationScopeKey, freshness: state.freshness ?? 'unknown' });
-          }
-        }
+        applyPublicShareStateRead(state);
       })
       .catch(() => {
         if (!cancelled && publicFileRequestSeqRef.current === requestSeq) setFileShareFreshness('unknown');
@@ -7959,28 +7966,7 @@ function HtmlViewer({
         const current = publicFileIdentityRef.current;
         if (requestSeq !== publicFileRequestSeqRef.current
           || current.projectId !== projectId || current.fileName !== file.name) return;
-        setFileShareStatus(state.status ?? null);
-        setFileShareFreshness(state.freshness ?? 'unknown');
-        const knownLink = publicFileShareLinkFromRead(state);
-        if (state.status === 'stopped') {
-          onObservedPublicShareLink?.(null);
-          // A confirmed remote stop outranks a previously known local URL.
-          // An unavailable read is not a confirmed stop and keeps the link.
-          setPublishedFileUrl('');
-          setPublishedFileSlug('');
-        } else if (knownLink) {
-          // A live publication without a Viewer address keeps its slug so the
-          // owner can still stop it; only a real URL is observable as a link.
-          setPublishedFileUrl(knownLink.url ?? '');
-          setPublishedFileSlug(knownLink.slug);
-          if (state.status === 'active' && workspaceContext && sourceAuthorizationScopeKey
-            && state.publication?.url && state.publication.slug) {
-            onObservedPublicShareLink?.({ status: 'active', projectId, filePath: file.name,
-              slug: state.publication.slug, url: state.publication.url,
-              workspaceId: workspaceContext.workspaceId, workspaceMemberId: workspaceContext.workspaceMemberId,
-              authorizationScopeKey: sourceAuthorizationScopeKey, freshness: state.freshness ?? 'unknown' });
-          }
-        }
+        applyPublicShareStateRead(state);
       })
       .catch(() => {
         if (requestSeq === publicFileRequestSeqRef.current) setFileShareFreshness('unknown');
@@ -8037,6 +8023,37 @@ function HtmlViewer({
     }, requestId ? { requestId } : undefined);
   };
 
+  /**
+   * A successful stop or publish/resume IS the share's status from that moment;
+   * the panel never waits for its next open to learn it. A publish that answered
+   * without a link re-reads the state once, and a read that fails or has no link
+   * either leaves the publication standing as "link unavailable".
+   */
+  function settlePublicShareAfterMutation(
+    outcome: { status: 'stopped' } | { status: 'active'; link: WebPublicFileShareLink },
+    requestSeq: number,
+  ) {
+    setFileShareStatus(outcome.status);
+    if (outcome.status === 'stopped') {
+      setFileShareFreshness('unknown');
+      setPublishedFileUrl('');
+      setPublishedFileSlug('');
+      onObservedPublicShareLink?.(null);
+      return;
+    }
+    setPublishedFileUrl(outcome.link.url ?? '');
+    setPublishedFileSlug(outcome.link.slug);
+    if (outcome.link.url) return;
+    void fetchProjectFilePublicShareState(projectId, file.name, workspaceContext)
+      .then((state) => {
+        const current = publicFileIdentityRef.current;
+        if (publicFileRequestSeqRef.current !== requestSeq
+          || current.projectId !== projectId || current.fileName !== file.name) return;
+        applyPublicShareStateRead(state);
+      })
+      .catch(() => {});
+  }
+
   async function publishCurrentFilePublic(mode?: 'resume') {
     if (streaming || viewerOnly || publishingPublicFile) return;
     const requestProjectId = projectId;
@@ -8079,8 +8096,7 @@ function HtmlViewer({
       ) {
         return;
       }
-      setPublishedFileUrl(response.url ?? '');
-      setPublishedFileSlug(response.slug);
+      settlePublicShareAfterMutation({ status: 'active', link: response }, requestSeq);
       if (response.madeTeamVisible) setShareAccess('workspace');
       clearPublicFileProgressTimers();
       setPublishProgress(boundedPublishProgress(0, true));
@@ -8291,9 +8307,7 @@ function HtmlViewer({
       ) {
         return;
       }
-      setPublishedFileUrl('');
-      setPublishedFileSlug('');
-      onObservedPublicShareLink?.(null);
+      settlePublicShareAfterMutation({ status: 'stopped' }, requestSeq);
       confirmedStop = { sourceFilePath: requestFileName, accountScope: requestAccountScope, generation: requestAccountGeneration };
     } catch (error) {
       console.warn('[FileViewer] failed to unpublish public file', error);
