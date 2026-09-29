@@ -6442,6 +6442,37 @@ export function ProjectView({
     ],
   );
 
+  /**
+   * Invariant: handing a comment to the agent never deletes it. Only an
+   * explicit user delete emits a comment tombstone; the hand-off lifecycle is
+   * carried by `status` alone. A run that failed or was canceled did not act
+   * on the comments it was handed, so they return to 'open' and the list
+   * shows them again.
+   */
+  const releaseCommentsAfterUnsuccessfulRun = useCallback(
+    (comments: ReadonlyArray<Pick<PreviewComment, 'id' | 'conversationId'>>) => {
+      if (comments.length === 0) return;
+      const releasedIds = new Set(comments.map((comment) => comment.id));
+      commitPreviewComments((current) =>
+        current.map((comment) =>
+          releasedIds.has(comment.id) ? { ...comment, status: 'open' } : comment,
+        ),
+      );
+      void Promise.all(
+        comments.map((comment) =>
+          patchPreviewCommentStatus(
+            project.id,
+            comment.conversationId,
+            comment.id,
+            'open',
+            projectRunWorkspaceContext,
+          ),
+        ),
+      ).catch(() => {});
+    },
+    [project.id, commitPreviewComments, projectRunWorkspaceContext],
+  );
+
   // Maximum number of times we will retry fetching a null status for a
   // spuriouslyFailedPending run before treating the absence as authoritative
   // completion.  Transient null-status retries are bounded; after
@@ -8534,8 +8565,9 @@ export function ProjectView({
           meta: { ...(meta ?? {}), sessionMode: runSessionMode, taskAnalytics },
         });
         // `true` means the send has been durably accepted by this view's
-        // queue. Callers that own persisted annotations may only remove them
-        // after this acknowledgement; preflight rejection remains `false`.
+        // queue. Callers that hold a saved comment in their composer may only
+        // let go of it after this acknowledgement; preflight rejection
+        // remains `false`. The comment itself is never deleted by a send.
         return true;
       }
       if (currentConversationBusy) {
@@ -8625,6 +8657,9 @@ export function ProjectView({
         commentAttachments: commentAttachments.length > 0 ? commentAttachments : undefined,
       };
       const runCommentAttachments = userMsg.commentAttachments ?? [];
+      const runSavedComments = runCommentAttachments
+        .filter((attachment) => attachment.source !== 'board-batch')
+        .map((attachment) => ({ id: attachment.id, conversationId: runConversationId }));
       const runAttachments = mergeChatAttachments(
         userMsg.attachments ?? [],
         ...runCommentAttachments.map((attachment) =>
@@ -9479,6 +9514,8 @@ export function ProjectView({
       );
       const cancelController = new AbortController();
       let authoritativeArtifactPaths: string[] | undefined;
+      // onDone is delivered for a canceled run too; onRunStatus says which.
+      let runReportedCanceled = false;
       abortRef.current = controller;
       cancelRef.current = cancelController;
       const handlers = {
@@ -9607,9 +9644,7 @@ export function ProjectView({
               true,
               { telemetryFinalized: true },
             );
-            if (runCommentAttachments.length > 0) {
-              void patchAttachedStatuses(runCommentAttachments, 'failed');
-            }
+            releaseCommentsAfterUnsuccessfulRun(runSavedComments);
             const ownsCurrentRun = clearCurrentRunStreamingMarker(
               runConversationId,
               controller,
@@ -9656,7 +9691,9 @@ export function ProjectView({
               && latestRunMessage?.id === assistantId;
           };
           if (finalizingRunId) finalizingLocalRunIdsRef.current.add(finalizingRunId);
-          if (runCommentAttachments.length > 0) {
+          if (runReportedCanceled) {
+            releaseCommentsAfterUnsuccessfulRun(runSavedComments);
+          } else if (runCommentAttachments.length > 0) {
             void patchAttachedStatuses(runCommentAttachments, 'needs_review');
           }
           const ownsCurrentRun = clearCurrentRunStreamingMarker(
@@ -9843,9 +9880,7 @@ export function ProjectView({
               });
               if (deliveryOutcome === 'no_result' || deliveryOutcome === 'delivery_failed') {
                 setError(artifactPersistenceError ?? DESIGN_RESULT_MISSING_DETAIL);
-                if (runCommentAttachments.length > 0) {
-                  void patchAttachedStatuses(runCommentAttachments, 'failed');
-                }
+                releaseCommentsAfterUnsuccessfulRun(runSavedComments);
               }
               await auditDesignSystemWorkspaceAfterRun(assistantId);
             } finally {
@@ -9928,9 +9963,7 @@ export function ProjectView({
                 if (failedUser) persistMessage(failedUser);
                 return next;
               });
-              if (runCommentAttachments.length > 0) {
-                void patchAttachedStatuses(runCommentAttachments, 'failed');
-              }
+              releaseCommentsAfterUnsuccessfulRun(runSavedComments);
             }
             clearTraceTouchedFilePaths();
             clearCurrentRunStreamingMarker(
@@ -9964,9 +9997,7 @@ export function ProjectView({
                 : prev.runStatus,
               resumable,
             }));
-            if (runCommentAttachments.length > 0) {
-              void patchAttachedStatuses(runCommentAttachments, 'failed');
-            }
+            releaseCommentsAfterUnsuccessfulRun(runSavedComments);
           }
           // Mark the run as completed in the reattach registry so that
           // attachRecoverableRuns does not race it after streaming ends.
@@ -10380,6 +10411,7 @@ export function ProjectView({
             // no assistant run to finalize or persist; onError moves the failure
             // to the user row instead.
             if (!currentRunId && runStatus === 'failed') return;
+            runReportedCanceled = runStatus === 'canceled';
             const endedAt = isTerminalRunStatus(runStatus) ? Date.now() : undefined;
             const runMayFinalize =
               !supersededRunsRef.current.has(controller);
@@ -10608,6 +10640,7 @@ export function ProjectView({
             }));
           },
           onRunStatus: (runStatus) => {
+            runReportedCanceled = runStatus === 'canceled';
             const endedAt = isTerminalRunStatus(runStatus) ? Date.now() : undefined;
             const runMayFinalize = !supersededRunsRef.current.has(controller);
             // 见 CLI / AMR 路径同名回调:落终态就把重连那一行让出去。
@@ -10675,6 +10708,7 @@ export function ProjectView({
       persistMessageById,
       auditDesignSystemWorkspaceAfterRun,
       patchAttachedStatuses,
+      releaseCommentsAfterUnsuccessfulRun,
       updateMessageById,
       markStreamingConversation,
       clearStreamingMarker,
@@ -10843,6 +10877,22 @@ export function ProjectView({
       controller.abort();
     }
     reattachControllersRef.current.clear();
+    // Stopping aborts the stream, so the stopped turn never reports a terminal
+    // status of its own. Release ONLY the in-flight run's comments: queued
+    // sends (including one being prioritized by "send now") also hold their
+    // attachments in 'applying', and those must stay reserved — the run that
+    // drains them re-applies them. The in-flight run's comments are exactly
+    // the 'applying' ones not owned by any queued send.
+    const queuedCommentIds = new Set(
+      queuedChatSendsRef.current.flatMap((send) =>
+        send.commentAttachments.map((attachment) => attachment.id),
+      ),
+    );
+    releaseCommentsAfterUnsuccessfulRun(
+      previewCommentsRef.current.filter(
+        (comment) => comment.status === 'applying' && !queuedCommentIds.has(comment.id),
+      ),
+    );
     setStreaming(false);
     streamingConversationIdRef.current = null;
     setStreamingConversationId(null);
@@ -10859,6 +10909,7 @@ export function ProjectView({
     onProjectsRefresh,
     persistMessage,
     projectDetail.refresh,
+    releaseCommentsAfterUnsuccessfulRun,
     requestOpenFile,
     refreshWorkspaceItems,
   ]);
@@ -10893,41 +10944,7 @@ export function ProjectView({
       for (const controller of reattachControllersRef.current.values()) {
         supersededRunsRef.current.add(controller);
       }
-      // The interrupted turn moved its preview-comment attachments to
-      // 'applying' when it started; since we now suppress its terminal
-      // callbacks, reset them to 'open' so they don't stay stuck mid-apply.
-      // Reset ONLY the in-flight run's comments: queued sends (including the
-      // one being prioritized) also hold their attachments in 'applying', and
-      // those must stay reserved — the replacement run re-applies them. The
-      // in-flight run's comments are exactly the 'applying' ones not owned by
-      // any queued send.
-      const queuedCommentIds = new Set(
-        queuedChatSendsRef.current.flatMap((send) =>
-          send.commentAttachments.map((attachment) => attachment.id),
-        ),
-      );
-      const stuckApplying = previewCommentsRef.current.filter(
-        (comment) => comment.status === 'applying' && !queuedCommentIds.has(comment.id),
-      );
-      if (stuckApplying.length > 0) {
-        const resetIds = new Set(stuckApplying.map((comment) => comment.id));
-        commitPreviewComments((current) =>
-          current.map((comment) =>
-            resetIds.has(comment.id) ? { ...comment, status: 'open' } : comment,
-          ),
-        );
-        void Promise.all(
-          stuckApplying.map((comment) =>
-            patchPreviewCommentStatus(
-              project.id,
-              comment.conversationId,
-              comment.id,
-              'open',
-              projectRunWorkspaceContext,
-            ),
-          ),
-        ).catch(() => {});
-      }
+      // handleStop releases the interrupted turn's comments back to 'open'.
       prioritizeQueuedChatSend(id);
       handleStop();
       return;
@@ -10942,7 +10959,7 @@ export function ProjectView({
       );
       if (started) removeQueuedChatSend(id);
     })();
-  }, [armSlideNavForQueuedSend, commitPreviewComments, currentConversationBusy, handleSend, handleStop, prioritizeQueuedChatSend, project.id, removeQueuedChatSend, projectRunWorkspaceContext]);
+  }, [armSlideNavForQueuedSend, currentConversationBusy, handleSend, handleStop, prioritizeQueuedChatSend, removeQueuedChatSend]);
 
   /*
    * B11 「引导对话」 —— 队列行领头那颗按钮走的就是上面的

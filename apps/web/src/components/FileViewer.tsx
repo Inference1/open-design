@@ -15101,9 +15101,6 @@ function HtmlViewer({
           commentsToAttachments([existingComment]),
         );
         if (!commentSendCompleted(result, existingComment.id)) return;
-        if (!onRemovePreviewComment) return;
-        const removed = await onRemovePreviewComment(existingComment.id);
-        if (!removed) return;
         clearBoardComposer();
       } finally {
         setSendingBoardBatch(false);
@@ -16609,26 +16606,14 @@ function HtmlViewer({
             commentsToAttachments(selected),
           );
           const completedIds = new Set(result.commentIds);
-          if (completedIds.size === 0 || !onRemovePreviewComment) return;
-          const removedIds = new Set<string>();
-          const removals = await Promise.all(
-            selected
-              .filter((comment) => completedIds.has(comment.id))
-              .map(async (comment) => ({
-                id: comment.id,
-                removed: await onRemovePreviewComment(comment.id),
-              })),
-          );
-          for (const removal of removals) {
-            if (removal.removed) removedIds.add(removal.id);
-          }
+          if (completedIds.size === 0) return;
           setSelectedSideCommentIds((current) => {
             const next = new Set(current);
-            for (const id of removedIds) next.delete(id);
+            for (const id of completedIds) next.delete(id);
             return next;
           });
           setActivePreviewCommentId((current) => (
-            current && removedIds.has(current) ? null : current
+            current && completedIds.has(current) ? null : current
           ));
         } finally {
           setSendingBoardBatch(false);
