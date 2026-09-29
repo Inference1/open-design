@@ -137,8 +137,15 @@ jobs:
           TO_TAG: v${{ inputs.to_version }}
         run: |
           set -euo pipefail
-          if ! gh release view "$TO_TAG" --json tagName --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if ! release="$(gh release view "$TO_TAG" --json tagName,isDraft,isPrerelease --repo "$GITHUB_REPOSITORY" 2>/dev/null)"; then
             echo "::error::no GitHub Release for $TO_TAG; re-run with move_github_release=false if that is expected"
+            exit 1
+          fi
+          # Existing is not the same as eligible: GitHub will not put the Latest
+          # badge on a draft or a prerelease, so the edit below would fail with
+          # the R2 rollback already done.
+          if [ "$(jq -r .isDraft <<<"$release")" != "false" ] || [ "$(jq -r .isPrerelease <<<"$release")" != "false" ]; then
+            echo "::error::GitHub Release $TO_TAG is a draft or prerelease and cannot be marked Latest; re-run with move_github_release=false"
             exit 1
           fi
 

@@ -82,6 +82,14 @@ describe("release rollback workflow", () => {
     const writeIndex = rollback.indexOf("- name: Roll back stable latest");
     expect(assertIndex).toBeGreaterThanOrEqual(0);
     expect(assertIndex).toBeLessThan(writeIndex);
+
+    // Existing is not eligible. GitHub will not badge a draft or a prerelease
+    // as Latest, so a preflight that only proves the record exists lets the
+    // same half-complete rollback through by a different door.
+    const preflight = rollback.slice(assertIndex, writeIndex);
+    expect(preflight).toContain("--json tagName,isDraft,isPrerelease");
+    expect(preflight).toContain("jq -r .isDraft");
+    expect(preflight).toContain("jq -r .isPrerelease");
   });
 
   it("[P0] moves only the GitHub Release badge and never rewrites release copy", async () => {
