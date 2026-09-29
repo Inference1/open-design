@@ -38,8 +38,17 @@ export function ShareConflictRow({ conflict, t }: {
         name: conflict.suggestedName,
       })} />
       <div className={styles.actions}>
-        <ShareButton variant="soft" onClick={() => { void copyPrompt(); }}>
-          {feedback === 'copied' ? t('preview.shareCopied') : t('fileViewer.copyFixForAgent')}
+        <ShareButton variant="soft" className={styles.copyAction} onClick={() => { void copyPrompt(); }}>
+          {/* Both labels share one grid cell so the button keeps the wider
+              width while "Copied" shows, instead of shrinking for a moment. */}
+          <span className={styles.labelStack}>
+            <span aria-hidden={feedback === 'copied'} className={feedback === 'copied' ? styles.hiddenLabel : undefined}>
+              {t('fileViewer.copyFixForAgent')}
+            </span>
+            <span aria-hidden={feedback !== 'copied'} className={feedback === 'copied' ? undefined : styles.hiddenLabel}>
+              {t('preview.shareCopied')}
+            </span>
+          </span>
         </ShareButton>
       </div>
       {feedback === 'failed' ? (
