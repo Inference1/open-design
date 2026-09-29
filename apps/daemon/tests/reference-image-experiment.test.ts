@@ -51,7 +51,7 @@ describe('reference-image experiment inputs', () => {
   it('leaves other projects, changed prompts, followups and clarification untouched', () => {
     const f = fixture();
     expect(referenceImageExperimentInput({ ...f, projectName: 'my-portfolio' })).toBeNull();
-    expect(referenceImageExperimentInput({ ...f, projectName: 'eval-OD-EVAL-002' })).toBeNull();
+    expect(referenceImageExperimentInput({ ...f, projectName: 'eval-OD-EVAL-999' })).toBeNull();
     expect(referenceImageExperimentInput({ ...f, isContinuation: true })).toBeNull();
     expect(referenceImageExperimentInput({ ...f, requestBody: { message: 'change hero' } })).toBeNull();
     expect(referenceImageExperimentInput({ ...f, requestBody: { ...f.requestBody, currentPrompt: '' } })).toBeNull();
