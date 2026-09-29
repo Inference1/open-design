@@ -1,4 +1,4 @@
-# OD Next Prototype Task Profile v2.2.2
+# OD Next Prototype Task Profile v3.1.0
 
 > Rollout: active
 
@@ -115,6 +115,12 @@ record them in the Design Spec:
   and disabled states wherever the declared flow needs them.
 - Modals, menus, drawers, and page transitions have explicit enter, exit, and
   return paths.
+- Prototype actions must work inside the product's sandboxed preview without
+  native form submission or navigation. For local add/save actions use a
+  `type="button"` click handler and an Enter key handler that invoke the same
+  local update; do not depend only on a form submit event. Keep an in-memory
+  fallback when localStorage is unavailable, and do not promise persistence
+  in a preview that blocks storage. Do not weaken the host sandbox.
 - Use semantic controls, visible keyboard focus, accessible names, useful alt
   text, non-color status cues, and reduced-motion behavior.
 - Motion exists only to explain state change, hierarchy, or the result of an
@@ -156,6 +162,11 @@ fact and quotes its source in `device-frame-shell`.
 - Use the selected shell's markup and CSS as the document skeleton and put
   the product inside the `APP CONTENT START` / `APP CONTENT END` slot; the
   app mounts in `.phone-content` and nowhere else.
+- Start a new handheld output by copying the entire selected shell file to the
+  requested HTML entry, then replace its APP CONTENT slot and add scoped product
+  styles and behavior. Do not reconstruct the shell from memory or copy only
+  its body: its head styles, safe-area variables, system chrome, and responsive
+  fallback are required together. Keep them intact when adding layout.css.
 - One handset persists across the whole prototype. Screen navigation and hash
   routes swap the content inside the screen; a new handset per route appears
   only when the user asks for a side-by-side board.

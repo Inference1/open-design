@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { DELIVERABLE_SKILLS, OD_NEXT_PLAN_OUTPUT_INSTRUCTIONS, resolveOdNextDeckFrameworkMode } from '@open-design/contracts';
+import { assertOdNextPlanningBuildOnlyV2, DELIVERABLE_SKILLS, OD_NEXT_PLAN_OUTPUT_INSTRUCTIONS, resolveOdNextDeckFrameworkMode } from '@open-design/contracts';
 import { resolvePluginFolder } from '../../../src/plugins/registry.js';
 import { createBundledStrategyBindingV2, loadBundledStrategyPromptAssetsV2 } from '../../../src/plugins/strategy-package.js';
 import { loadOdNextTaskResourcesForSnapshot, materializeOdNextDeviceFrames } from '../../../src/strategies/od-next/device-frames.js';
@@ -20,6 +20,10 @@ it('ships ten loadable main Skills without restoring the retired machine protoco
   if (!resolved.ok) throw Error(resolved.errors.join(';'));
   const binding = createBundledStrategyBindingV2({ plugin: resolved.record, taskType: 'discovery' });
   const assets = loadBundledStrategyPromptAssetsV2({ plugin: resolved.record, binding });
+  for (const name of ['core-system-prompt.md', 'general-orchestration.md', 'task-profiles/discovery.md']) {
+    const body = await readFile(path.join(folder, 'assets', name), 'utf8');
+    expect(() => assertOdNextPlanningBuildOnlyV2(body, name)).not.toThrow();
+  }
   expect(assets.taskSkill).toContain('Query');
   expect(assets.taskSkill).toContain('production-ready');
   expect(assets.taskSkill).not.toMatch(/requiredDeliverables|runtime-state|planContractHash/);

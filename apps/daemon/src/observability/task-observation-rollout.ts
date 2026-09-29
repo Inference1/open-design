@@ -1,6 +1,7 @@
 import { evidenceStore, reconcileTaskObjectReasons } from '../services/evidence-delivery.js';
 import { createHash } from 'node:crypto';
 import { taskRunUsage, projectTaskTrace, type TaskRunTraceProjection } from './task-trace-projection.js';
+import { preserveDiscoveryObservation } from '../strategies/od-next/discovery-observation.js';
 import { getConversation } from '../db.js';
 import { redactPromptText } from '../prompt-telemetry.js';
 import { evidenceMode, type EvalContextV2 } from './eval-context.js';
@@ -526,7 +527,7 @@ async function taskAggregate(
       ? await buildSafeRunQualityProjectionFromDaemon({
           db: options.db,
           dataDir: options.dataDir,
-          run: {
+          run: preserveDiscoveryObservation(run, {
             ...run,
             model: run.model ?? '',
             projectId: task.projectId,
@@ -538,7 +539,7 @@ async function taskAggregate(
             error: run.error ?? null,
             errorCode: run.errorCode ?? null,
             events: run.events.map((event, index) => ({ id: index + 1, ...event })),
-          },
+          }),
           prefs: telemetry.prefs,
           exactPrompt: { ...exactFinalText, stage: mapping.inputStage },
           onTraceProjection: projection => traceProjections.set(run.id, { runId: run.id, ...projection }),

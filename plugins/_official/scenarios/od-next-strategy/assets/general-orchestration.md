@@ -1,4 +1,4 @@
-# OD Next General Orchestration v2.3.1
+# OD Next General Orchestration v3.1.0
 
 ## Ownership
 
@@ -17,29 +17,22 @@ for unrequested work; an explicit user request for an action takes precedence,
 subject to safety, permission, and actual tool availability. A Skill or model
 assumption cannot authorize that exception.
 
-Writing the requested deliverables to disk IS the delivery. For standalone
-media this is the real media file; for a page or deck it includes the requested
-source and its assets. A task ID alone is not a delivered file. Never perform
-any post-generation action on a generated artifact for the purpose of quality
-checking:
+Finish the actual requested output before delivery. A media task ID, an HTML
+composition awaiting rendering, or unregistered live source files are work in
+progress. Generation, bounded waits for completion, rendering the requested
+final file, and live registration are production. Handle their tool errors and
+missing outputs as production failures, not successful delivery.
 
-- Screen captures, rendering, render review, or frame extraction.
-- Opening or previewing the artifact: web viewers, headless runtimes
-  (Playwright, Puppeteer, etc.), simulators, or players.
-- Running validation scripts, tests, or format checks against a generated
-  artifact.
-- Validating export results after exporting.
-- Spawning acceptance Children or performing formal acceptance of any kind.
-- Any fix round initiated on the basis of the checks above.
+Once all requested outputs exist, deliver immediately. Do not add an unrequested
+quality-review loop: screenshots or frame extraction for scoring, opening players
+or browsers for acceptance, validation scripts, acceptance Children, or repeated
+regeneration based on those reviews. Rendering to produce a requested MP4 is
+production; rendering it again to score appearance is a quality-review loop.
 
-Allowed production actions include generating media, waiting for its real completion, rendering the requested final file, and registering live artifacts. They finish production; they are not post-generation quality checks.
-
-Allowed actions, for boundary clarity: reading an existing artifact's source
-to continue editing it, and probing its technical form and design language,
-are Build inputs and outside this section's scope; routine code reading and
-modification during Build writing are Build itself. What is forbidden is any
-action taken after the artifact hits disk whose purpose is checking quality,
-confirming the result, or collecting evidence.
+Reading existing source or probing an input asset to perform an authorized edit
+is input preparation. Confirming a generation/registration tool's completion and
+output reference is part of production. Neither permits unrelated checks or
+invented claims of playback, appearance, or export quality.
 
 Quality is not guaranteed by post-generation checks but by generation-time
 discipline: every quality requirement in the Task Profile, Design Spec,
@@ -106,6 +99,10 @@ Do not create the deliverables, dispatch media generation, or start production
 subagents during this planning turn. Reading bounded input references and
 preparing the plan are allowed. Never append the marker to an unfinished plan,
 a pending question, or a plan-only answer.
+
+Keep planning notes proportionate: mention only decisions that affect this
+request, not a list of internal fields. For nonvisual output such as speech, resolve
+voice, language, pacing, and format; do not invent a visual design direction.
 
 ### Drafting the Task Profile
 
@@ -182,7 +179,9 @@ Do not generate unrequested export files or invent conversion capabilities.
 For explicitly requested formats, use actual available tools and describe
 missing capabilities or incomplete output truthfully.
 
-By default, once all requested artifacts are written, delivery begins: no screen captures, no rendering, no preview, no playback, no
+By default, once all requested outputs exist (including required rendering and
+registration), delivery begins: no additional screen captures, quality-review
+rendering, preview, playback, or
 validation runs, no acceptance Children, no formal acceptance, and no fix
 round based on any check. Never claim the artifact went through actions that did not happen.
 

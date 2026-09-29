@@ -1,4 +1,4 @@
-export const DELIVERABLE_SKILL_CATALOG_VERSION = '2.0.0';
+export const DELIVERABLE_SKILL_CATALOG_VERSION = '2.1.0';
 
 /** Main deliverable catalog. Describes outputs; never a machine-plan admission gate. */
 export const DELIVERABLE_SKILL_IDS = [
@@ -21,7 +21,7 @@ export interface DeliverableSkillDefinition {
   routes: readonly { id: DeliverableProductionRoute; kind: string; extensions: readonly string[] }[];
 }
 export const DELIVERABLE_SKILLS: readonly DeliverableSkillDefinition[] = [
-  { id: 'prototype', title: '原型', description: '网页、应用界面、交互流程；交付可操作 HTML。', routes: [{ id: 'prototype-html', kind: 'prototype', extensions: ['html'] }] },
+  { id: 'prototype', title: '原型', description: '网站、应用界面与交互流程；不含说明书、幻灯片或仅因 HTML 格式的其他产物。', routes: [{ id: 'prototype-html', kind: 'prototype', extensions: ['html'] }] },
   { id: 'ppt', title: '幻灯片', description: '汇报与演示；交付 HTML 幻灯片，产品提供 PDF/PPTX 导出。', routes: [{ id: 'ppt-html', kind: 'presentation', extensions: ['html'] }] },
   { id: 'document', title: '文档', description: '报告、说明书、长文；交付排版 HTML 文档，不承诺 DOCX。', routes: [{ id: 'document-html', kind: 'document', extensions: ['html'] }] },
   { id: 'image', title: '图片', description: '图片文件使用媒体生成；明确要求可编辑排版源码时使用 HTML。', routes: [{ id: 'media-image', kind: 'image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }, { id: 'image-html', kind: 'source', extensions: ['html'] }] },
@@ -31,7 +31,7 @@ export const DELIVERABLE_SKILLS: readonly DeliverableSkillDefinition[] = [
   { id: 'live-artifact', title: '实时产物', description: '可刷新数据看板；调用现有注册接口生成预览，保留真实来源。', routes: [{ id: 'live-artifact', kind: 'live', extensions: ['html'] }] },
   { id: 'video', title: '视频', description: '可播放的视频文件；媒体生成或声明的动画渲染完成后交付 MP4。', routes: [{ id: 'media-video', kind: 'video', extensions: ['mp4'] }] },
   { id: 'audio', title: '音频', description: '配音、音乐、音效；通过媒体接口交付真实音频文件。', routes: [{ id: 'media-audio', kind: 'audio', extensions: ['mp3', 'wav', 'm4a', 'ogg'] }] },
-].map((skill) => ({ ...skill, version: '3.0.0' })) as readonly DeliverableSkillDefinition[];
+].map((skill) => ({ ...skill, version: '3.1.0' })) as readonly DeliverableSkillDefinition[];
 
 export function renderDeliverableSkillCatalog(skillRoot: string): string {
   return DELIVERABLE_SKILLS.map((skill) =>

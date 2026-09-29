@@ -1,7 +1,8 @@
 import { DELIVERABLE_SKILL_CATALOG_VERSION, DELIVERABLE_SKILLS } from '@open-design/contracts';
+import { singleSkillShellRead } from './skill-shell-read.js';
 
 type Event = { event?: string; data?: unknown };
-type Load = { skill_id: string; version: string; tool_use_id: string; source: 'file_read'; status: 'requested' | 'loaded' | 'failed' | 'unknown'; content_coverage?: 'complete' | 'unknown' };
+type Load = { skill_id: string; version: string; tool_use_id: string; source: 'file_read' | 'shell_read'; status: 'requested' | 'loaded' | 'failed' | 'unknown'; content_coverage?: 'complete' | 'unknown' };
 const observers = new WeakMap<object, ReturnType<typeof createObserver>>();
 const MAX_LOADS = 128;
 
@@ -23,13 +24,16 @@ function createObserver() {
       }
       if (data.type === 'tool_use' && typeof data.id === 'string') {
         const input = data.input as Record<string, unknown> | undefined;
-        const file = input?.filePath ?? input?.file_path ?? input?.path;
-        const match = typeof file === 'string' ? /\/od-next-strategy\/assets\/task-profiles\/([a-z-]+)\.md$/.exec(file.replaceAll('\\', '/')) : null;
+        const shellFile = ['Bash', 'exec_command'].includes(String(data.name))
+          ? singleSkillShellRead(input?.command ?? input?.cmd) : undefined;
+        const rawFile = shellFile ?? input?.filePath ?? input?.file_path ?? input?.path;
+        const file = typeof rawFile === 'string' ? rawFile.replaceAll('\\', '/') : undefined;
+        const match = file ? /\/od-next-strategy\/assets\/task-profiles\/([a-z-]+)\.md$/.exec(file) : null;
         const skill = DELIVERABLE_SKILLS.find((candidate) => candidate.id === match?.[1]);
-        if (skill && skillRoot && file === `${skillRoot}/${skill.id}.md` && ['Read', 'read', 'read_file', 'read_text_file'].includes(String(data.name))) {
+        if (skill && skillRoot && file === `${skillRoot}/${skill.id}.md` && (shellFile || ['Read', 'read', 'read_file', 'read_text_file'].includes(String(data.name)))) {
           if (reads.size >= MAX_LOADS && !reads.has(data.id)) { partial = true; return; }
           if (!reads.has(data.id)) reads.set(data.id, { skill_id: skill.id, version: skill.version,
-            tool_use_id: data.id, source: 'file_read', status: 'requested' });
+            tool_use_id: data.id, source: shellFile ? 'shell_read' : 'file_read', status: 'requested' });
           if (input?.offset !== undefined || input?.limit !== undefined || input?.start_line !== undefined || input?.end_line !== undefined) ranged.add(data.id);
         } else if (JSON.stringify(input ?? {}).includes('/task-profiles/')) partial = true;
       }
@@ -74,6 +78,13 @@ export function discoveryObservation(events: readonly Event[]): Record<string, u
   const observer = createObserver();
   events.forEach((event) => observer.push(event));
   return observer.metadata();
+}
+
+/** Task exporters normalize Run objects; keep their bounded live evidence attached. */
+export function preserveDiscoveryObservation<T extends object>(source: object, target: T): T {
+  const observer = observers.get(source);
+  if (observer) observers.set(target, observer);
+  return target;
 }
 
 export function discoveryObservationForRun(run: { events: readonly Event[] }): Record<string, unknown> {

@@ -11,7 +11,7 @@ import {
 } from '../src/prompts/od-next-strategy.js';
 
 import { composeSystemPrompt } from '../src/prompts/system.js';
-import { composeOdNextMarkerProductionTurn } from '../src/prompts/od-next-production-marker.js';
+import { composeOdNextMarkerProductionTurn, renderOdNextProductionReadyInstructions } from '../src/prompts/od-next-production-marker.js';
 
 const A = 'a'.repeat(64);
 const B = 'b'.repeat(64);
@@ -494,6 +494,9 @@ describe('OD Next V2 prompt recipe', () => {
     expect(core).toContain(recipe.coreStrategy);
     expect(request).toContain(recipe.coreStrategy);
     expect(production).toContain('This is the production turn');
+    expect(production).toContain("Use the language of the user's latest request");
+    expect(production).toContain('including the first progress update');
+    expect(production).toContain('Do not narrate internal Skill IDs');
     for (const prompt of [core, stableContext, request, JSON.stringify(bundle), production]) {
       expect(prompt).not.toContain('task-brief');
       expect(prompt).not.toContain('rule-proposal');
@@ -634,4 +637,13 @@ describe('runtime plan tool in the stable request context', () => {
     expect(composeOdNextStrategyStableRequestContextV2({ agentId: 'kimi', planToolNote: '' }))
       .not.toContain('runtime-plan-tool');
   });
+});
+
+
+it('keeps planning progress in the user language without exposing host protocol details', () => {
+  const prompt = renderOdNextProductionReadyInstructions('a1b2');
+  expect(prompt).toContain('<od-production-ready key="a1b2" />');
+  expect(prompt).toContain('FIRST progress sentence');
+  expect(prompt).toContain('Keep the visible plan brief and result-focused');
+  expect(renderOdNextProductionReadyInstructions('invalid key')).toBe('');
 });
