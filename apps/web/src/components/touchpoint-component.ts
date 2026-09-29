@@ -682,6 +682,17 @@ export function lockWebTouchpointModalScroll(
 	};
 }
 
+/**
+ * Gives a host-owned modal its initial focus in composed-tree order, so the
+ * first control inside the component's ShadowRoot (a light-DOM query cannot
+ * reach it) receives focus. The container itself is focused only when the
+ * content offers no control at all.
+ */
+export function focusWebTouchpointModal(modal: HTMLElement | null) {
+	if (!modal) return;
+	(composedFocusableElements(modal)[0] ?? modal).focus();
+}
+
 /** Keeps keyboard focus inside a host-owned modal without exposing host DOM to content. */
 export function trapWebTouchpointModalFocus(
 	event: KeyboardEvent,
