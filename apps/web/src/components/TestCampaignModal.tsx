@@ -537,6 +537,28 @@ function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
+ * Resolves once the page is shown again, or at once when it is not hidden.
+ *
+ * A hidden page is not a revoked session: `isCurrent` reads `!document.hidden`
+ * through the lease, so without this pause a retry that fell while the tab was
+ * in the background would end delivery for good, and the watcher that produced
+ * the visibility has already stopped and will not produce another one.
+ */
+function waitUntilShown(signal: AbortSignal): Promise<void> {
+	return new Promise<void>((resolve) => {
+		const check = () => {
+			if (document.hidden && !signal.aborted) return;
+			document.removeEventListener("visibilitychange", check);
+			signal.removeEventListener("abort", check);
+			resolve();
+		};
+		document.addEventListener("visibilitychange", check);
+		signal.addEventListener("abort", check, { once: true });
+		check();
+	});
+}
+
+/**
  * Delivers one visible placement's receipt at most once per success.
  *
  * A single visibility is the only evidence the watcher produces, so a lost
@@ -555,6 +577,7 @@ async function deliverTestAcceptance(
 		if (attempt > 0) {
 			await waitForRetry(TEST_ACCEPTANCE_RETRY_MS[attempt - 1]!, signal);
 		}
+		if (document.hidden) await waitUntilShown(signal);
 		if (!isCurrent()) return false;
 		const request = new AbortController();
 		const cancel = () => request.abort();
@@ -572,7 +595,8 @@ async function deliverTestAcceptance(
 			await Promise.race([recordTestAcceptance(input, request.signal), abandoned]);
 			return isCurrent();
 		} catch (error) {
-			if (!isCurrent()) return false;
+			// Hidden is paused, not revoked: the next attempt waits to be shown.
+			if (!isCurrent() && !document.hidden) return false;
 			emitWebTouchpointDiagnostic({
 				code:
 					error instanceof Error
@@ -863,8 +887,41 @@ export function TestCampaignModal({
 				if (!acquired) return { kind: "clear" };
 				selectedContext = acquired;
 			}
-			const loadPlacements = (selectedContext: TestContext) => Promise.allSettled(
-				placements.map(async (placementKey) => {
+			/**
+			 * A withdrawal from any placement is the server's answer for the whole
+			 * campaign, so it must not wait behind a sibling that hangs until the
+			 * lifecycle's request budget aborts the attempt — an aborted attempt is
+			 * retained, and the withdrawal it collected would be lost with it. The
+			 * first withdrawal cancels the siblings and settles the attempt at once.
+			 */
+			const loadPlacements = async (selectedContext: TestContext) => {
+				const siblings = new AbortController();
+				const cancelSiblings = () => siblings.abort();
+				signal.addEventListener("abort", cancelSiblings, { once: true });
+				let withdrawal: unknown = null;
+				try {
+					const settled = await Promise.allSettled(
+						placements.map((placementKey) =>
+							loadPlacement(selectedContext, placementKey, siblings.signal).catch((error: unknown) => {
+								if (touchpointWithdrawsDisplay(error)) {
+									withdrawal ??= error;
+									siblings.abort();
+								}
+								throw error;
+							}),
+						),
+					);
+					if (withdrawal) throw withdrawal;
+					return settled;
+				} finally {
+					signal.removeEventListener("abort", cancelSiblings);
+				}
+			};
+			const loadPlacement = async (
+				selectedContext: TestContext,
+				placementKey: (typeof placements)[number],
+				requestSignal: AbortSignal,
+			) => {
 					const query = new URLSearchParams({
 						deploymentId: selected.id,
 						placementKey,
@@ -872,7 +929,7 @@ export function TestCampaignModal({
 					});
 					const response = await fetch("/api/touchpoints/test-runtime?" + query, {
 						cache: "no-store",
-						signal,
+						signal: requestSignal,
 					});
 					if (!current()) return null;
 					if (!response.ok)
@@ -960,8 +1017,7 @@ export function TestCampaignModal({
 						serverTime,
 						validForMs: deadline - serverTime,
 					};
-				}),
-			);
+			};
 			let settled = await loadPlacements(selectedContext);
 			if (!current()) return { kind: "retain" };
 			const failures = (results: typeof settled) =>

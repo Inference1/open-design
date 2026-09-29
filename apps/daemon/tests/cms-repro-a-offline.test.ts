@@ -82,6 +82,23 @@ describe("OPEND-3436 offline cache acceptance", () => {
     cache.remember(key, delayedResponse);
     expect(createTouchpointContentCache(dataDir).replayOffline(key, "upstream_unreachable")).toBeNull();
   });
+  it.each([
+    ["an empty cache", () => undefined, receipt()],
+    ["another delivery", (cache: ReturnType<typeof createTouchpointContentCache>) =>
+      cache.remember(key, { ...body(), deploymentId: "deployment-2" }), receipt()],
+    ["no receipt", () => undefined, null],
+  ] as const)("AC6 a 410 over %s still fences a full response requested before it", (_label, seed, withdrawal) => {
+    const cache = createTouchpointContentCache(dataDir);
+    seed(cache);
+    const earlier = cache.ticket(key);
+    cache.forgetWithdrawn(key, withdrawal);
+    cache.remember(key, body(), earlier);
+    const replay = createTouchpointContentCache(dataDir).replayOffline(key, "upstream_unreachable");
+    expect(replay?.deploymentId).not.toBe("deployment-1");
+    // A request sent after the 410 is an answer the server gave knowing about it.
+    cache.remember(key, { ...body(), serverTime: iso(1) }, cache.ticket(key));
+    expect(createTouchpointContentCache(dataDir).replayOffline(key, "upstream_unreachable")?.deploymentId).toBe("deployment-1");
+  });
   it("AC6 receipt for the retained UI credential clears the rotated cache credential's same delivery", () => {
     const cache = createTouchpointContentCache(dataDir); cache.remember(key, body());
     cache.remember(key, { ...body(), touchpointDecisionId: "decision-2" });
@@ -98,7 +115,10 @@ describe("OPEND-3436 offline cache acceptance", () => {
   });
   it("AC5 startup cleans expired packages before requests arrive", () => {
     createTouchpointContentCache(dataDir).remember(key, { ...body(), endsAt: iso(60_000) });
-    vi.advanceTimersByTime(120_000);
+    // The daemon was down through endsAt: the old instance's expiry timer never fires.
+    vi.clearAllTimers();
+    vi.setSystemTime(T0 + 120_000);
+    expect(records()).toHaveLength(1);
     createTouchpointContentCache(dataDir);
     expect(records()).toHaveLength(0);
   });

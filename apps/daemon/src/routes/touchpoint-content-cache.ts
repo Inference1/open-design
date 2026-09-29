@@ -80,9 +80,28 @@ export interface TouchpointContentCache {
     key: TouchpointContentKey,
     held: HeldContentRef,
     trimmed: Record<string, unknown>,
+    ticket?: number,
   ): Record<string, unknown> | null;
-  /** Record the content of a full response for later reassembly. Never throws. */
-  remember(key: TouchpointContentKey, response: unknown): void;
+  /**
+   * Record the content of a full response for later reassembly. Never throws.
+   *
+   * `ticket` is what {@link ticket} returned when the request that produced
+   * `response` was sent; see there for why an answer must carry one.
+   */
+  remember(key: TouchpointContentKey, response: unknown, ticket?: number): void;
+  /**
+   * Stamp a request for this placement as it is sent, so the answer can later
+   * be told apart from one that a 410 has since overtaken.
+   *
+   * The server-time fence in `remember` can only date a withdrawal it has a
+   * stored record for; a 410 that arrives while the cache is empty, holds
+   * another delivery, or carries no receipt at all leaves it nothing to date.
+   * The ticket is local order instead: once a 410 for this placement has been
+   * handled, no answer to a request sent before it is written, whatever
+   * delivery it names. Such an answer is still served — only persisting it is
+   * refused — and the next request writes the cache again.
+   */
+  ticket(key: TouchpointContentKey): number;
   /**
    * The whole decision to answer with while the runtime is unreachable, or
    * `null` when there is nothing this store may put on the screen.
@@ -551,6 +570,21 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
    * to try. Bounded so a long-running daemon cannot grow it without limit.
    */
   const revocations = new Map<string, number>();
+  /** Per placement: the last ticket issued, and the last one a 410 overtook. */
+  let tickets = 0;
+  const withdrawnThrough = new Map<string, number>();
+  const fenceInFlight = (key: TouchpointContentKey): void => {
+    const name = `${key.scope}\u0000${keyName(key)}`;
+    withdrawnThrough.delete(name);
+    withdrawnThrough.set(name, tickets);
+    while (withdrawnThrough.size > MAX_REVOCATIONS) {
+      const oldest = withdrawnThrough.keys().next().value;
+      if (oldest === undefined) break;
+      withdrawnThrough.delete(oldest);
+    }
+  };
+  const overtakenByWithdrawal = (key: TouchpointContentKey, ticket: number | undefined): boolean =>
+    ticket !== undefined && ticket <= (withdrawnThrough.get(`${key.scope}\u0000${keyName(key)}`) ?? 0);
   const deliveryName = (scope: string, identity: TouchpointCachedIdentity): string =>
     [scope, identity.activityId, identity.deploymentId, identity.contentVersionId].join('\u0000');
   const recordRevocation = (record: AssemblyRecord): void => {
@@ -635,12 +669,16 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
       return { heldContentId: record.contentId, heldContentLocale: record.locale };
     },
 
-    reassemble(key, held, trimmed) {
+    reassemble(key, held, trimmed, ticket) {
       const record = readAssembly(key);
       if (!record || !recordStillHolds(record, held)) return null;
       const full = rebuild(key, record, trimmed);
-      if (full) adoptRenewal(key, record, full, trimmed);
+      if (full && !overtakenByWithdrawal(key, ticket)) adoptRenewal(key, record, full, trimmed);
       return full;
+    },
+
+    ticket() {
+      return ++tickets;
     },
 
     replayOffline(key, reason) {
@@ -665,6 +703,7 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     },
 
     forgetWithdrawn(key, body) {
+      fenceInFlight(key);
       const record = readAssembly(key);
       if (!record || !touchpointWithdrawalReclaims(body, record.identity)) return false;
       recordRevocation(record);
@@ -672,8 +711,9 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
       return true;
     },
 
-    remember(key, response) {
+    remember(key, response, ticket) {
       try {
+        if (overtakenByWithdrawal(key, ticket)) return;
         if (!isRecord(response)) return;
         const content = response.content;
         if (!isRecord(content)) return;

@@ -679,6 +679,7 @@ function proxyTouchpointRuntimeRequest(
    * loop between a server that trims and a cache that cannot assemble.
    */
   const send = (held: HeldContentRef | null, fallback: boolean): void => {
+    const ticket = contentKey && contentCache ? contentCache.ticket(contentKey) : undefined;
     const attempt = new URL(target);
     if (held) {
       attempt.searchParams.set('heldContentId', held.heldContentId);
@@ -875,7 +876,7 @@ function proxyTouchpointRuntimeRequest(
         }
         const decision = parsed as Record<string, unknown>;
         if (decision.contentOmitted !== true) {
-          contentCache.remember(contentKey, decision);
+          contentCache.remember(contentKey, decision, ticket);
           res.status(200);
           res.setHeader('content-type', upstreamRes.headers['content-type'] ?? 'application/json');
           res.end(decoded);
@@ -886,7 +887,7 @@ function proxyTouchpointRuntimeRequest(
         // non-null by construction; rebuilding without it would rebuild from
         // whatever the record says NOW, which a concurrent full response for
         // the same placement may already have replaced.
-        const full = held ? contentCache.reassemble(contentKey, held, decision) : null;
+        const full = held ? contentCache.reassemble(contentKey, held, decision, ticket) : null;
         if (full) {
           res.status(200);
           res.setHeader('content-type', 'application/json');

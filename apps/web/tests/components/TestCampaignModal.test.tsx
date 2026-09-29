@@ -1156,6 +1156,61 @@ describe("Test runtime context generation", () => {
 		await waitFor(() => expect(screen.getByTestId("test-runtime-decision-count")).toHaveTextContent("4"));
 		expect(contextRequests(fetchMock)).toBe(2);
 	});
+
+	it("withdraws at once when one placement answers 410 while a sibling hangs", async () => {
+		const context = { deploymentId: "deployment-four", scenario: "realtime" as const, updatedAt: freshUpdatedAt };
+		const deployment = {
+			id: "deployment-four",
+			activityId: "activity-four",
+			snapshotHash: "sha256:four-snapshot",
+			snapshot: {
+				contentVersionId: "version-four-placement",
+				manifestHash: digest(JSON.stringify(allTestManifest)),
+				artifactHash: "sha256:four-artifact",
+				placementKeys: [...allTestPlacements],
+			},
+		};
+		((globalThis as CampaignHostGlobal).__openDesignCampaignTestHost as { client: { osLocale: string } }).client.osLocale = "zh-CN";
+		let withdrawn = false;
+		const hung: AbortSignal[] = [];
+		const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+			if (url.includes("acceptances")) return new Response(JSON.stringify({ id: "acceptance" }), { status: 201 });
+			if (url.includes("/production-runtime")) return new Response(null, { status: 404 });
+			if (init?.method === "POST") return new Response(JSON.stringify(context), { status: 201 });
+			if (url.includes("/deployments")) return new Response(JSON.stringify({ deployments: [deployment] }));
+			const placementKey = new URL(url, "http://127.0.0.1").searchParams.get("placementKey") as (typeof allTestPlacements)[number];
+			if (withdrawn && placementKey === "opend.home.campaign-modal")
+				return new Response(JSON.stringify({ error: "test_deployment_withdrawn" }), { status: 410 });
+			if (withdrawn)
+				return new Promise<Response>((_resolve, reject) => {
+					hung.push(init!.signal!);
+					init!.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+				});
+			return new Response(JSON.stringify({
+				...runtime(fourPlacementContent(placementKey)),
+				deploymentId: deployment.id,
+				placementKey,
+				activityId: deployment.activityId,
+				snapshotHash: deployment.snapshotHash,
+				artifactHash: deployment.snapshot.artifactHash,
+				manifestHash: deployment.snapshot.manifestHash,
+				requiredCapabilities: placementKey === "opend.home.campaign-modal" ? ["close", "static-action"] : placementKey === "opend.home.account-badge" ? ["static-action"] : ["hover", "static-action"],
+				testContext: { ...context, scheduleState: "active" as const },
+			}));
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({ entryUrl: "blob:test-four-placement", resourceUrls: new Map(), dispose: vi.fn() } as never);
+		render(<><TestRuntimeProbe /><TestCampaignHarness authenticated /></>);
+		await screen.findByTestId("touchpoint-test-selector");
+		fireEvent.change(screen.getByLabelText("Test activity"), { target: { value: deployment.id } });
+		await waitFor(() => expect(screen.getByTestId("test-runtime-decision-count")).toHaveTextContent("4"));
+		withdrawn = true;
+		window.dispatchEvent(new Event("focus"));
+		// Well inside the lifecycle's 15-second request budget.
+		await waitFor(() => expect(screen.getByTestId("test-runtime-decision-count")).toHaveTextContent("0"));
+		expect(hung.length).toBeGreaterThan(0);
+		expect(hung.every((signal) => signal.aborted)).toBe(true);
+	});
 });
 
 

@@ -924,6 +924,33 @@ describe("Test acceptance delivery", () => {
 		await vi.advanceTimersByTimeAsync(retryBudgetMs);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
+	it("pauses retries while the page is hidden and resumes once it is shown", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(null, { status: 500 }))
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		let hidden = false;
+		const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, "hidden")!;
+		Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+		try {
+			// The lease reads visibility, as the real one does.
+			const value = { ...session(), isAuthorized: () => !document.hidden };
+			setTestRuntimeSession(value);
+			visible(value);
+			await vi.advanceTimersByTimeAsync(0);
+			hidden = true;
+			await vi.advanceTimersByTimeAsync(retryBudgetMs);
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+			hidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+		} finally {
+			Object.defineProperty(document, "hidden", descriptor);
+			delete (document as { hidden?: boolean }).hidden;
+		}
+	});
 	it("cancels in-flight delivery when the session is cleared", async () => {
 		const fetchMock = vi.fn().mockImplementationOnce(() => new Promise(() => {}));
 		vi.stubGlobal("fetch", fetchMock);
