@@ -107,7 +107,13 @@ export function useTestRuntime(): TestRuntimeSession | null {
 export function setTestRuntimeSession(
 	session: TestRuntimeSession | null,
 ): void {
-	if (currentTestSession?.selectionKey !== session?.selectionKey)
+	if (
+		currentTestSession?.selectionKey !== session?.selectionKey ||
+		currentTestSession?.context.testerMemberId !==
+			session?.context.testerMemberId ||
+		currentTestSession?.deployment.snapshotHash !==
+			session?.deployment.snapshotHash
+	)
 		resetAcceptanceDelivery();
 	currentTestSession = session;
 	for (const listener of testRuntimeListeners) listener();

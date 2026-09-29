@@ -962,4 +962,108 @@ describe("Test acceptance delivery", () => {
 		await vi.advanceTimersByTimeAsync(retryBudgetMs);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
+	it("cancels in-flight work on logout and ignores its late success", async () => {
+		let complete!: (response: Response) => void;
+		const fetchMock = vi
+			.fn()
+			.mockImplementationOnce(
+				() =>
+					new Promise<Response>((resolve) => {
+						complete = resolve;
+					}),
+			)
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		clearTestRuntimeSession();
+		expect(fetchMock.mock.calls[0]![1].signal?.aborted).toBe(true);
+		complete(new Response("{}", { status: 201 }));
+		await vi.advanceTimersByTimeAsync(0);
+		const next = session();
+		setTestRuntimeSession(next);
+		visible(next);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+	it("isolates a new snapshot and cancels the previous snapshot's queued retry", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(null, { status: 500 }))
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(0);
+		const nextContext = { ...value.context, deploymentId: "deployment-2" };
+		const nextDecision = {
+			...decision(placement),
+			deploymentId: "deployment-2",
+			snapshotHash: "sha256:new",
+			testContext: { ...nextContext, scheduleState: "active" as const },
+		};
+		const next = {
+			...session(),
+			selectionKey: "deployment-2:snapshot-2",
+			context: nextContext,
+			decisions: new Map([[placement, nextDecision]]),
+			deployment: {
+				...value.deployment,
+				id: "deployment-2",
+				snapshotHash: "sha256:new",
+			},
+		};
+		setTestRuntimeSession(next);
+		visible(next);
+		await vi.advanceTimersByTimeAsync(120_000);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(fetchMock.mock.calls[1]?.[0]).toContain(
+			"/test-deployments/deployment-2/acceptances",
+		);
+		visible(next);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it.each(["tester", "snapshot"] as const)(
+		"cancels a receipt when the %s changes under the same selection key",
+		async (changed) => {
+			const fetchMock = vi
+				.fn()
+				.mockImplementationOnce(() => new Promise(() => {}))
+				.mockResolvedValue(new Response("{}", { status: 201 }));
+			vi.stubGlobal("fetch", fetchMock);
+			const value = session();
+			setTestRuntimeSession(value);
+			visible(value);
+			const next = {
+				...session(),
+				context: changed === "tester"
+					? { ...value.context, testerMemberId: "another-tester" }
+					: value.context,
+				deployment: changed === "snapshot"
+					? { ...value.deployment, snapshotHash: "sha256:replacement" }
+					: value.deployment,
+			};
+			setTestRuntimeSession(next);
+			expect(fetchMock.mock.calls[0]![1].signal.aborted).toBe(true);
+			visible(next);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+		},
+	);
+	it("keeps retrying after a same-snapshot credential refresh", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(null, { status: 500 }))
+			.mockResolvedValue(new Response("{}", { status: 201 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const value = session();
+		setTestRuntimeSession(value);
+		visible(value);
+		await vi.advanceTimersByTimeAsync(0);
+		setTestRuntimeSession(session());
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
 });
