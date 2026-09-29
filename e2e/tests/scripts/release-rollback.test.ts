@@ -54,6 +54,18 @@ describe("release rollback workflow", () => {
     expect(rollback).not.toMatch(/aws s3|rclone|curl .*-X PUT/);
   });
 
+  it("[P0] proves the restored tag has a release before it writes anything", async () => {
+    const rollback = await readFile(rollbackWorkflow, "utf8");
+
+    // The badge move runs after the R2 write. Discovering a missing release
+    // there would end the run with `stable/latest` already moved and the
+    // GitHub "Latest" badge still on the retracted version.
+    const assertIndex = rollback.indexOf("- name: Assert the restored version has a GitHub Release");
+    const writeIndex = rollback.indexOf("- name: Roll back stable latest");
+    expect(assertIndex).toBeGreaterThanOrEqual(0);
+    expect(assertIndex).toBeLessThan(writeIndex);
+  });
+
   it("[P0] moves only the GitHub Release badge and never rewrites release copy", async () => {
     const rollback = await readFile(rollbackWorkflow, "utf8");
     const step = section(rollback, "      - name: Move the GitHub Release latest badge", "      - name: Publish the run summary");

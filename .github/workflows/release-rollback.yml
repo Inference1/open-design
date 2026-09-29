@@ -126,6 +126,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Before anything is written. Moving the badge happens after the R2
+      # rollback, so a missing release discovered there would fail the run with
+      # `latest` already moved — a half-done retraction is worse than a refused
+      # one.
+      - name: Assert the restored version has a GitHub Release
+        if: ${{ inputs.move_github_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TO_TAG: v${{ inputs.to_version }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TO_TAG" --json tagName --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::no GitHub Release for $TO_TAG; re-run with move_github_release=false if that is expected"
+            exit 1
+          fi
+
       # Refuses unless the live pointer still serves from_version, the target
       # version published completely, every ready platform's manifest and
       # updater feed exist, and the current installer floor is satisfiable by
