@@ -2000,6 +2000,75 @@ describe('collab sync routes', () => {
     } finally { db.close(); }
   });
 
+  it('share preflight returns a blocker when the entry pulls in the root index.html', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'od-share-index-conflict-'));
+    tempDirs.push(dir);
+    await writeFile(path.join(dir, 'page2.html'), '<iframe src="index.html"></iframe>');
+    await writeFile(path.join(dir, 'index.html'), '<h1>Home</h1>');
+    const db = new Database(':memory:');
+    try {
+      const share = await publicShareFixture({ db });
+      const api = await startSyncServer(personalContextProvider(), { resolveProjectDir: () => dir, ...share });
+      const result = await api.json('/api/projects/p1/files/page2.html/share-plan', { method: 'POST' });
+      expect(result.status).toBe(200);
+      expect(result.body.blockers).toHaveLength(1);
+      expect(result.body.blockers[0]).toMatchObject({
+        code: 'entry-index-conflict', path: 'index.html', entryPath: 'page2.html', referencedFrom: 'page2.html', suggestedName: 'home.html',
+        referrers: [{ file: 'page2.html', reference: 'index.html', attribute: '<iframe src>', line: 1, replacement: 'home.html' }],
+      });
+      expect(result.body.blockers[0].agentPrompt).toContain('Rename the project\'s root file "index.html" to "home.html"');
+      expect(vi.mocked(runVelaResourceCommand)).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+
+  it('publish-public refuses a root index.html conflict with 409 before reserving or preparing', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'od-share-index-conflict-'));
+    tempDirs.push(dir);
+    await writeFile(path.join(dir, 'page2.html'), '<iframe src="index.html"></iframe>');
+    await writeFile(path.join(dir, 'index.html'), '<h1>Home</h1>');
+    const db = new Database(':memory:');
+    try {
+      const share = await publicShareFixture({ db });
+      const reserve = vi.spyOn(share.sharePublishing.reservations, 'reserve');
+      const prepare = vi.spyOn(share.sharePublishing, 'prepare');
+      const api = await startSyncServer(personalContextProvider(), {
+        resolveProjectDir: () => dir, resolveSharedProject: async () => null, ...share,
+      });
+      const plan = await api.json('/api/projects/p1/files/page2.html/share-plan', { method: 'POST' });
+      const response = await api.json('/api/projects/p1/files/page2.html/publish-public', { method: 'POST' });
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe('SHARE_ENTRY_INDEX_CONFLICT');
+      expect(response.body.error.message).toContain('"page2.html" references the project\'s root index.html');
+      expect(response.body.error.data).toMatchObject({ path: 'index.html', referencedFrom: 'page2.html', suggestedName: 'home.html' });
+      expect(response.body.error.data.agentPrompt).toBe(plan.body.blockers[0].agentPrompt);
+      expect(response.body.plan).toEqual(plan.body);
+      expect(reserve).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
+      expect(vi.mocked(runVelaResourceCommand)).not.toHaveBeenCalled();
+      expect(share.publicFilePublicationStore.get({ projectId: 'p1', filePath: 'page2.html', resourceTeamId: 'ws-personal-1', ownerMemberId: 'wm-personal-1' })).toBeNull();
+    } finally { db.close(); }
+  });
+
+  it('S15 refuses an oversized share before reserving or preparing', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'od-share-s15-order-'));
+    tempDirs.push(dir);
+    await writeFile(path.join(dir, 'index.html'), '<img src="large.png">');
+    await writeFile(path.join(dir, 'large.png'), Buffer.alloc(SHARE_MAX_TOTAL_BYTES + 1, 65));
+    const db = new Database(':memory:');
+    try {
+      const share = await publicShareFixture({ db });
+      const reserve = vi.spyOn(share.sharePublishing.reservations, 'reserve');
+      const prepare = vi.spyOn(share.sharePublishing, 'prepare');
+      const api = await startSyncServer(personalContextProvider(), {
+        resolveProjectDir: () => dir, resolveSharedProject: async () => null, ...share,
+      });
+      const response = await api.json('/api/projects/p1/files/index.html/publish-public', { method: 'POST' });
+      expect(response.status).toBe(413);
+      expect(reserve).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+
   it('rejects direct public publish of a JSX module before pushing or recording publication', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'od-share-react-module-'));
     tempDirs.push(dir);
@@ -2407,14 +2476,18 @@ describe('collab sync routes', () => {
   });
 
   it('does not upload when Viewer preparation fails', async () => {
-    const resolveProjectDir = vi.fn(() => { throw new Error('must not read project'); });
+    // The local plan is built (and refused on size/blockers) before prepare,
+    // so the project is read; nothing may be uploaded or published.
+    const dir = await mkdtemp(path.join(tmpdir(), 'od-prepare-fails-'));
+    tempDirs.push(dir);
+    await writeFile(path.join(dir, 'index.html'), '<h1>A</h1>');
+    const resolveProjectDir = vi.fn(() => dir);
     const fixture = await publicShareFixture();
     fixture.sharePublishing.prepare = async () => { throw new Error('Viewer origin unavailable'); };
     const api = await startSyncServer(fixedShareContextProvider(true), { ...fixture, resolveProjectDir, resolveSharedProject: async () => null });
     const response = await api.json('/api/projects/p1/files/index.html/publish-public', { method: 'POST' });
     expect(response.status).toBe(502);
     expect(response.body.error).toBe('PUBLIC_SHARE_PREPARATION_UNAVAILABLE');
-    expect(resolveProjectDir).not.toHaveBeenCalled();
     expect(runVelaResourceCommand).not.toHaveBeenCalled();
     expect(publishReservedVelaShareVersion).not.toHaveBeenCalled();
   });
