@@ -54,6 +54,24 @@ describe("release rollback workflow", () => {
     expect(rollback).not.toMatch(/aws s3|rclone|curl .*-X PUT/);
   });
 
+  it("[P0] hands the live installer-floor policy to the rollback step", async () => {
+    const [rollback, stable] = await Promise.all([
+      readFile(rollbackWorkflow, "utf8"),
+      readFile(stableWorkflow, "utf8"),
+    ]);
+    const step = section(rollback, "      - name: Roll back stable latest", "      # The GitHub Release body");
+
+    // resolveLauncherVersionFloor() reads process env, and repository variables
+    // are not process env. Drop this handoff and a rollback resolves NO floor:
+    // it deletes an active control.launcher.version from the restored metadata
+    // and stops refusing targets below the current minimum. Silent, and only
+    // visible once a stable floor is actually configured.
+    for (const name of ["RELEASE_LAUNCHER_VERSION_MIN_STABLE", "RELEASE_LAUNCHER_VERSION_MIN_URL_STABLE"]) {
+      expect(step, `rollback step must pass ${name}`).toContain(`${name}: \${{ vars.${name} }}`);
+      expect(stable, `release-stable must still pass ${name}`).toContain(`${name}: \${{ vars.${name} }}`);
+    }
+  });
+
   it("[P0] proves the restored tag has a release before it writes anything", async () => {
     const rollback = await readFile(rollbackWorkflow, "utf8");
 

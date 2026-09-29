@@ -149,8 +149,20 @@ jobs:
       # re-checks through the public URL.
       - name: Roll back stable latest
         env:
+          # githubInfo() stamps these into the rollback provenance block that
+          # ends up in latest/metadata.json; unset would record empty strings.
+          RELEASE_BRANCH: main
           RELEASE_CHANNEL: stable
+          RELEASE_COMMIT: ${{ github.sha }}
           RELEASE_DRY_RUN: ${{ inputs.dry_run }}
+          # The installer floor is repo-vars policy, and repository variables are
+          # not process env. Without this handoff the rollback resolves NO floor:
+          # it would delete an active `control.launcher.version` from the restored
+          # metadata and happily point latest below the current minimum — the
+          # exact safeguard this workflow claims to enforce.
+          # `release-stable.yml` passes the same pair to publish and verify.
+          RELEASE_LAUNCHER_VERSION_MIN_STABLE: ${{ vars.RELEASE_LAUNCHER_VERSION_MIN_STABLE }}
+          RELEASE_LAUNCHER_VERSION_MIN_URL_STABLE: ${{ vars.RELEASE_LAUNCHER_VERSION_MIN_URL_STABLE }}
           RELEASE_OUTPUTS_PATH: ${{ runner.temp }}/release-rollback/outputs.json
           RELEASE_PUBLIC_ORIGIN: ${{ vars.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
           RELEASE_REPOSITORY: ${{ github.repository }}
