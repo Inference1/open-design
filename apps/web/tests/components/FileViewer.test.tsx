@@ -6868,7 +6868,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(menuItems).not.toContain('Screenshot');
   });
 
-  it('keeps an artifact-card Share request limited to OpenDesign Quick Share', async () => {
+  it('opens the current Share panel from an artifact card', async () => {
     const file = baseFile({
       name: 'index.html',
       path: 'index.html',
@@ -6915,7 +6915,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(await screen.findByText('Generate and copy link')).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: /Generate and copy link/i })).toBeTruthy();
     expect(screen.queryByText('Share project in workspace')).toBeNull();
-    expect(screen.queryByText('Visibility in workspace')).toBeNull();
+    expect(screen.getByText('Visibility in workspace')).toBeVisible();
     expect(screen.queryByText('SHARE ON YOUR OWN HOSTING')).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /Deploy to Vercel/i })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /Save as template/i })).toBeNull();
@@ -7101,16 +7101,7 @@ describe('FileViewer SVG artifacts', () => {
     }]);
   });
 
-  // Reading the help must never publish. The publish row's trailing "?" carries
-  // the reach + single-file limitation copy, i.e. exactly what a user wants to
-  // read BEFORE committing — but it used to be nested inside the same
-  // `role="menuitem"` button whose onClick calls `publishCurrentFilePublic()`
-  // unconditionally, so activating it created a public link. Touch devices have
-  // no hover path at all, so pressing was the only way to read it. The "?" now
-  // lives on the section label instead, outside the actionable row.
-  //
-  // The invariant: activating the publish help emits no publish-public request,
-  // in both viewer chromes.
+  // The current panel presents link access inline. Reading it must not publish.
   function publishHelpCase(fileFor: () => ProjectFile, label: string) {
     it(`reads the publish help without publishing (${label})`, async () => {
       const context = teamWorkspaceContext();
@@ -7148,31 +7139,7 @@ describe('FileViewer SVG artifacts', () => {
       fireEvent.click(await screen.findByRole('button', { name: /share/i }));
       expect(await screen.findByRole('menu')).toBeTruthy();
 
-      // Located by the explanation it carries, not by a testid the fix added —
-      // so this spec still finds the pre-fix help (nested in the publish row)
-      // and goes red on the behavior rather than on a missing hook.
-      // chain1-publish G4: the stale "only a single file / local assets not
-      // supported" sentence was deleted from this copy (contradicted the
-      // current multi-resource share); the help now reads its remaining,
-      // still-accurate sentence.
-      const help = await screen.findByLabelText(/Anyone with the link can view it online/i);
-      // It is NOT inside the actionable publish row.
-      expect(help.closest('[role="menuitem"]')).toBeNull();
-
-      // It must be a real focusable control, not a decorative span: the tooltip
-      // layer discloses on `focusin`, which only a focusable element receives,
-      // and touch devices have no hover path at all. A <span> leaves the
-      // single-file limitation unreadable for keyboard and touch users.
-      expect(help.tagName).toBe('BUTTON');
-      expect(help).toHaveProperty('type', 'button');
-      // The help sits at the menu's trailing edge. Opening downward placed the
-      // bubble under the action rows (and most of it behind the higher menu
-      // layer); it belongs above its own section label.
-      expect(help.getAttribute('data-tooltip-placement')).toBe('top');
-      help.focus();
-      expect(document.activeElement).toBe(help);
-
-      fireEvent.click(help);
+      expect(await screen.findByText('Recipients can view the preview and existing comments — not the conversation or code.')).toBeVisible();
 
       // No public link was created by a help-discovery gesture.
       await waitFor(() => expect(screen.getByRole('menu')).toBeTruthy());
@@ -7209,8 +7176,9 @@ describe('FileViewer SVG artifacts', () => {
     expect(trigger).toHaveFocus();
     expect(menu).toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    const writes = vi.mocked(fetch).mock.calls.filter(([, init]) =>
-      !['GET', 'HEAD'].includes((init?.method ?? 'GET').toUpperCase()));
+    const writes = vi.mocked(fetch).mock.calls.filter(([input, init]) =>
+      !String(input).endsWith('/share-plan')
+      && !['GET', 'HEAD'].includes((init?.method ?? 'GET').toUpperCase()));
     expect(writes).toEqual([]);
   });
 

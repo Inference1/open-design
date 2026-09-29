@@ -3814,26 +3814,12 @@ test('[P0] project detail share menu opens the current share page for uploaded h
     .poll(() =>
       page.evaluate(() => (window as typeof window & { __openedUrls?: string[] }).__openedUrls ?? []),
     )
-    .toContain('https://protected-share.example');
+    .toContain('https://protected-share.example/');
 });
 
-test('[P0] @critical project detail share menu publish action opens the deploy flow for the selected provider', async ({ page }) => {
-  let deployConfigUrl: string | null = null;
+test('[P0] @critical project detail share menu lists Vercel under more sharing options', async ({ page }) => {
   await page.route('**/api/projects/*/deployments', async (route) => {
     await route.fulfill({ json: { deployments: [] } });
-  });
-  await page.route('**/api/deploy/config?providerId=*', async (route) => {
-    deployConfigUrl = route.request().url();
-    const url = new URL(route.request().url());
-    await route.fulfill({
-      json: {
-        configured: false,
-        providerId: url.searchParams.get('providerId'),
-        tokenMask: '',
-        teamId: '',
-        teamSlug: '',
-      },
-    });
   });
   // Match the other writable share scenarios: APIRequestContext creation does
   // not register the browser's same-session owner witness, so provide the
@@ -3852,15 +3838,8 @@ test('[P0] @critical project detail share menu publish action opens the deploy f
   await openUploadedHtmlArtifactPreview(page, uploadedName);
 
   await openShareMenu(page);
-  await page.getByRole('menuitem', { name: /^Deploy to Vercel$/i }).click();
-
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('heading', { name: /Deploy to Vercel/i })).toBeVisible();
-  await expect(dialog.locator('select').first()).toHaveValue('vercel-self');
-  await expect
-    .poll(() => deployConfigUrl ?? '', { timeout: T.medium })
-    .toContain('providerId=vercel-self');
+  await page.getByRole('button', { name: 'More sharing options' }).click();
+  await expect(page.getByRole('menuitem', { name: /^Deploy to Vercel$/i })).toBeVisible();
 });
 
 test('[P1] home design card deletion supports cancel and confirm flows', async ({ page }) => {

@@ -46,7 +46,7 @@ describe('S1-T2 scope option rows', () => {
     };
     expect(declarations('.panel :global(.chrome-access-options button)')).toMatchObject({
       'box-sizing': 'border-box', height: '28px', 'min-height': '28px', padding: '0 8px',
-      gap: '8px', border: '0', 'border-radius': '4px', color: '#494949', 'font-size': '12px', 'font-weight': '400',
+      gap: '8px', border: '0', 'border-radius': '4px', color: '#494949', 'font-size': '12px', 'font-weight': '500',
     });
     for (const state of ['[aria-selected="true"]', ':hover:not(:disabled)']) {
       expect(declarations(`.panel :global(.chrome-access-options button${state})`)).toMatchObject({
