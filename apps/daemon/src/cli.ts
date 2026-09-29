@@ -7200,6 +7200,8 @@ function printProjectShareHelp() {
   console.log(`Usage:
   od project share preflight <id> --path <file> [--json]
                     Inspect included and missing references before publishing.
+                    Exits 1 when the plan has blockers (publish would be
+                    refused); each blocker prints a fix to paste to an agent.
   od project share publish <id> --path <file> [--json]
                     Publish a project file using the same endpoint as the UI.
                     Publishing a private project in a team workspace makes the
@@ -7280,14 +7282,37 @@ async function runProjectShare(args) {
     // Do not echo transport exceptions, which can contain URLs or credentials.
     return exitWithStructuredError({ code: 'daemon-not-running', message: 'Failed to reach daemon.' });
   }
-  if (!resp.ok) return structuredHttpFailure(resp);
+  if (!resp.ok) {
+    // Text mode: a refusal that carries a copy-to-agent fix instruction is
+    // printed readably before the structured envelope.
+    if (!flags.json && resp.status === 409) {
+      const body = await resp.clone().json().catch(() => null);
+      const conflict = body?.error?.code === 'SHARE_ENTRY_INDEX_CONFLICT' ? body.error.data : undefined;
+      if (typeof conflict?.agentPrompt === 'string') {
+        console.error(`[project] ${body.error.message}`);
+        console.error(`\nInstruction for a coding agent:\n\n${conflict.agentPrompt}\n`);
+        // The prompt was just printed readably; keep the envelope's other fields.
+        const { agentPrompt: _printed, ...data } = conflict;
+        return exitWithStructuredError({ code: body.error.code, message: body.error.message, data });
+      }
+    }
+    return structuredHttpFailure(resp);
+  }
   const data = await resp.json();
+  // A preflight with blockers means publish would be refused: exit non-zero
+  // in both output modes so scripts can gate on it.
+  const blockers = action === 'preflight' && Array.isArray(data?.blockers) ? data.blockers : [];
+  if (blockers.length) process.exitCode = 1;
   if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
   if (projectStatus) return console.log(JSON.stringify(data, null, 2));
   if (action === 'preflight') {
     console.log(`Share plan: ${data.fileCount} files, ${data.totalBytes} bytes.`);
     for (const item of data.exclusions ?? []) console.log(`Not included (${item.reason}): ${item.path}`);
-    if (!(data.exclusions ?? []).length) console.log('No missing or invalid references.');
+    for (const blocker of blockers) {
+      console.log(`Blocked (${blocker.code}): ${blocker.referencedFrom} references ${blocker.path}, which is where the shared page is published.`);
+      if (typeof blocker.agentPrompt === 'string') console.log(`\nInstruction for a coding agent:\n\n${blocker.agentPrompt}\n`);
+    }
+    if (!(data.exclusions ?? []).length && !blockers.length) console.log('No missing or invalid references.');
     return;
   }
   if (['stop', 'retry-stop'].includes(action)) return console.log('Sharing stopped.');
@@ -7341,6 +7366,8 @@ async function runProject(args) {
   od project delete <id>                  Delete a project.
   od project share preflight <id> --path <file> [--json]
                     Inspect included and missing references before publishing.
+                    Exits 1 when the plan has blockers (publish would be
+                    refused); each blocker prints a fix to paste to an agent.
   od project share publish <id> --path <file> [--json]
                     Publish a project file.
   od project share resume <id> --path <file> [--json]

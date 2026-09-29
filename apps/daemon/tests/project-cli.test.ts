@@ -37,7 +37,7 @@ afterEach(async () => {
   tempRoot = '';
 });
 
-async function startProjectStubServer(deleteResponse: unknown = { ok: true }, shareResponse?: unknown, shareStatus = 200): Promise<StubServer> {
+async function startProjectStubServer(deleteResponse: unknown = { ok: true }, shareResponse?: unknown, shareStatus = 200, planResponse?: unknown): Promise<StubServer> {
   const requests: CapturedRequest[] = [];
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -114,7 +114,7 @@ async function startProjectStubServer(deleteResponse: unknown = { ok: true }, sh
       }
       if (captured.method === 'POST' && captured.url === '/api/projects/project-1/files/nested%2Findex.html/share-plan') {
         res.statusCode = 200;
-        res.end(JSON.stringify({ fileCount: 1, totalBytes: 12, exceedsSizeLimit: false, exclusions: [{ path: 'assets/missing.png', reason: 'missing' }] }));
+        res.end(JSON.stringify(planResponse ?? { fileCount: 1, totalBytes: 12, exceedsSizeLimit: false, exclusions: [{ path: 'assets/missing.png', reason: 'missing' }] }));
         return;
       }
       if (['POST', 'GET'].includes(captured.method)
@@ -347,6 +347,37 @@ describe('od project CLI', () => {
     expect(JSON.parse(result.stdout)).toEqual({ fileCount: 1, totalBytes: 12, exceedsSizeLimit: false, exclusions: [{ path: 'assets/missing.png', reason: 'missing' }] });
     expect(stub.requests).toHaveLength(1);
     expect(stub.requests[0]).toMatchObject({ method: 'POST', url: '/api/projects/project-1/files/nested%2Findex.html/share-plan', headers: { 'x-od-workspace-id': 'ws-1', 'x-od-workspace-member-id': 'member-1' }, body: '' });
+  });
+  const conflictBlocker = {
+    code: 'entry-index-conflict', path: 'index.html', entryPath: 'nested/index.html', referencedFrom: 'nested/index.html', suggestedName: 'home.html',
+    referrers: [{ file: 'nested/index.html', reference: '../index.html', attribute: '<iframe src>', line: 4, replacement: '../home.html' }],
+    agentPrompt: 'Open Design cannot share "nested/index.html" yet.\n1. Rename the project\'s root file "index.html" to "home.html".',
+  };
+  const blockedPlan = { fileCount: 1, totalBytes: 12, exceedsSizeLimit: false, exclusions: [], blockers: [conflictBlocker] };
+  it('share preflight prints blockers with the agent prompt and exits non-zero', async () => {
+    stub = await startProjectStubServer(undefined, undefined, 200, blockedPlan);
+    const args = ['project', 'share', 'preflight', 'project-1', '--path', 'nested/index.html', '--workspace', 'ws-1', '--workspace-member', 'member-1', '--daemon-url', stub.baseUrl];
+    const text = await runCli(args);
+    expect(text.code).toBe(1);
+    expect(text.stdout).toContain('Blocked (entry-index-conflict): nested/index.html references index.html');
+    expect(text.stdout).toContain(conflictBlocker.agentPrompt);
+    expect(text.stdout).not.toContain('No missing or invalid references.');
+    const json = await runCli([...args, '--json']);
+    expect(json.code).toBe(1);
+    expect(JSON.parse(json.stdout)).toEqual(blockedPlan);
+  });
+  it('share publish prints the agent prompt for an index.html conflict', async () => {
+    const { code: _code, ...data } = conflictBlocker;
+    stub = await startProjectStubServer(undefined, { error: { code: 'SHARE_ENTRY_INDEX_CONFLICT', message: 'conflict message', data }, plan: blockedPlan }, 409);
+    const args = ['project', 'share', 'publish', 'project-1', '--path', 'nested/index.html', '--workspace', 'ws-1', '--workspace-member', 'member-1', '--daemon-url', stub.baseUrl];
+    const text = await runCli(args);
+    expect(text.code).not.toBe(0);
+    expect(text.stderr).toContain('conflict message');
+    expect(text.stderr).toContain(conflictBlocker.agentPrompt);
+    const json = await runCli([...args, '--json']);
+    expect(json.code).not.toBe(0);
+    const envelope = JSON.parse(json.stderr.trim().split('\n').at(-1)!);
+    expect(envelope.error).toMatchObject({ code: 'SHARE_ENTRY_INDEX_CONFLICT', message: 'conflict message', data: { agentPrompt: conflictBlocker.agentPrompt, suggestedName: 'home.html' } });
   });
   it.each(['publish', 'resume', 'get', 'status', 'stop'])('share %s uses the existing file endpoint and emits raw JSON', async action => {
     stub = await startProjectStubServer();
