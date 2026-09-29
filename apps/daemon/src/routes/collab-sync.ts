@@ -20,6 +20,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import {
+  SHARE_ENTRY_INDEX_CONFLICT,
   SHARE_MAX_TOTAL_BYTES,
   type SharePlanSummary,
   type ShareUnpublishResponse,
@@ -77,7 +78,7 @@ import {
 import { classifyVelaCommandFailure, logPublicFileFailure } from '../collab/public-file-failure.js';
 import { clientRequestIdFor } from '../http/client-request-id.js';
 import { isAbortedOperationError } from '../integrations/aborted-error.js';
-import { buildDeployFilePlan } from '../deploy.js';
+import { buildDeployFilePlan, entryIndexConflictError } from '../deploy.js';
 import { readProjectManifest } from '../project-locations.js';
 import { redactSecrets } from '../redact.js';
 import { findRealElementRange, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
@@ -437,13 +438,24 @@ async function buildSharePlan(
   projectDir: string,
   entryName: string,
   metadata: unknown,
-): Promise<{ summary: SharePlanSummary; files: Awaited<ReturnType<typeof buildDeployFilePlan>>['files']; mapping: ShareFileMapping; entryPath: string }> {
+): Promise<{
+  summary: SharePlanSummary;
+  files: Awaited<ReturnType<typeof buildDeployFilePlan>>['files'];
+  mapping: ShareFileMapping;
+  entryPath: string;
+  /** English refusal text when `summary.blockers` is non-empty. */
+  conflictMessage: string | null;
+}> {
   const deployPlan = await buildDeployFilePlan(
     path.dirname(projectDir),
     path.basename(projectDir),
     entryName,
     { metadata, hookScriptUrl: '', assetUrlPolicy: 'share-relative' },
   );
+  // A conflict leaves the entry at index.html (the planner never reads the
+  // colliding root index.html), so the mapping below stays valid; the
+  // blocker is what refuses the publish.
+  const conflict = deployPlan.indexConflict ? entryIndexConflictError(deployPlan.indexConflict, 'share') : null;
   const mapping = createShareFileMapping(deployPlan.files);
   const entryPath = publishedPathForSource(mapping, deployPlan.entryPath);
   if (!entryPath) throw new Error('SHARE_ENTRY_MAPPING_UNAVAILABLE');
@@ -455,6 +467,7 @@ async function buildSharePlan(
     files: deployPlan.files,
     mapping,
     entryPath,
+    conflictMessage: conflict?.message ?? null,
     summary: {
       fileCount: deployPlan.files.length,
       totalBytes,
@@ -463,6 +476,7 @@ async function buildSharePlan(
         ...deployPlan.missing.map((path) => ({ path, reason: 'missing' as const })),
         ...deployPlan.invalid.map((path) => ({ path, reason: 'invalid' as const })),
       ],
+      ...(conflict ? { blockers: [{ code: 'entry-index-conflict' as const, ...conflict.data }] } : {}),
     },
   };
 }
@@ -1455,13 +1469,9 @@ export function registerCollabSyncRoutes(
         return res.status(502).json({ error: 'PUBLIC_SHARE_RESUME_UNAVAILABLE' });
       }
     }
-    let prepared: Awaited<ReturnType<typeof publisher.prepare>>;
-    try {
-      const reservation = publisher.reservations.reserve(scope);
-      prepared = await publisher.prepare(scope, reservation.slug);
-    } catch {
-      return res.status(502).json({ error: 'PUBLIC_SHARE_PREPARATION_UNAVAILABLE' });
-    }
+    // The plan is built, and refused on size or blockers, before the alias is
+    // reserved or Vela is contacted: an unpublishable file must not cost a
+    // network round-trip or leave a reservation behind.
     if (!resolveProjectDir) {
       return res.status(500).json({ error: 'PROJECT_DIR_UNAVAILABLE' });
     }
@@ -1489,7 +1499,22 @@ export function registerCollabSyncRoutes(
         limit: SHARE_MAX_TOTAL_BYTES,
       });
     }
+    const blocker = sharePlan.summary.blockers?.[0];
+    if (blocker) {
+      const { code: _blockerCode, ...data } = blocker;
+      return res.status(409).json({
+        error: { code: SHARE_ENTRY_INDEX_CONFLICT, message: sharePlan.conflictMessage ?? '', data },
+        plan: sharePlan.summary,
+      });
+    }
 
+    let prepared: Awaited<ReturnType<typeof publisher.prepare>>;
+    try {
+      const reservation = publisher.reservations.reserve(scope);
+      prepared = await publisher.prepare(scope, reservation.slug);
+    } catch {
+      return res.status(502).json({ error: 'PUBLIC_SHARE_PREPARATION_UNAVAILABLE' });
+    }
     // Before registration: once the project is in the team catalog, a catalog
     // reconcile (hub event, project list read) may mark the row team-visible
     // ahead of this request, and the publish must still report that it did.
@@ -1781,7 +1806,8 @@ export function registerCollabSyncRoutes(
         const plan = await buildSharePlan(
           await resolveProjectDir(projectId), filePath, projectStore?.get?.(projectId)?.metadata,
         );
-        freshness = deps.shareContentFingerprints.compare(scope, plan.files);
+        // A blocked plan is not what would be published; do not compare it.
+        if (!plan.summary.blockers?.length) freshness = deps.shareContentFingerprints.compare(scope, plan.files);
       } catch {
         // Keep publication visibility independent from failed comparison.
       }

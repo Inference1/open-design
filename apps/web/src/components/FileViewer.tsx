@@ -44,6 +44,7 @@ import {
   type ProjectFileVersion,
   type SocialShareRequest,
   type SocialShareResponse,
+  type EntryIndexConflictDetails,
   type ShareContentFreshness,
   type ShareStatus,
   type WorkspaceCollabContext,
@@ -127,6 +128,7 @@ import {
 import {
   PublicFilePublishError,
   canPublishPublicFile,
+  publicFileEntryIndexConflict,
   publicFileManualRevokePublication,
   publicFilePublishFailureKey,
 } from '../collab/public-file-publish';
@@ -7708,6 +7710,8 @@ function HtmlViewer({
   // only renders inside the already-published branch, so a failed FIRST publish
   // used to leave no trace on screen at all — the button simply returned to idle.
   const [publishFailureKey, setPublishFailureKey] = useState<SharePublishFailureKey | null>(null);
+  // Details for `fileViewer.publishFileEntryIndexConflict`; read only while that key is set.
+  const [publishConflict, setPublishConflict] = useState<EntryIndexConflictDetails | null>(null);
   const [fileShareFreshness, setFileShareFreshness] = useState<ShareContentFreshness>('unknown');
   const [fileShareStatus, setFileShareStatus] = useState<ShareStatus | null>(null);
   const [updateToast, setUpdateToast] = useState<'success' | 'failure' | 'uncertain' | null>(null);
@@ -7719,7 +7723,8 @@ function HtmlViewer({
     // A size rejection describes the previous package. Reopening after edits
     // starts a fresh manual attempt, not an automatic retry of stale bytes.
     if (sharePanelOpen && !wasOpen && !publishingPublicFile
-      && publishFailureKey === 'fileViewer.publishFileTooLarge') setPublishFailureKey(null);
+      && (publishFailureKey === 'fileViewer.publishFileTooLarge'
+        || publishFailureKey === 'fileViewer.publishFileEntryIndexConflict')) setPublishFailureKey(null);
   }, [sharePanelOpen, publishingPublicFile, publishFailureKey]);
   const updateInFlightRef = useRef(false);
   // Published is decided by the durable alias, not by the URL: without a
@@ -8121,7 +8126,11 @@ function HtmlViewer({
         } else {
           setPublishLinkFeedback('failed');
           // The provider preserves status/code, but not the plan's byte totals.
-          setPublishFailureKey(error instanceof PublicFilePublishError
+          const conflict = publicFileEntryIndexConflict(error);
+          setPublishConflict(conflict);
+          setPublishFailureKey(conflict
+            ? 'fileViewer.publishFileEntryIndexConflict'
+            : error instanceof PublicFilePublishError
             && error.status === 413 && error.code === 'too_large'
             ? 'fileViewer.publishFileTooLarge'
             : publicFilePublishFailureKey(error));
@@ -17353,6 +17362,7 @@ function HtmlViewer({
                         viewerOnlyDisabledTitle={viewerOnlyDisabledTitle}
                         publishCurrentFilePublic={publishCurrentFilePublic}
                         publishFailureKey={publishFailureKey}
+                        publishConflict={publishFailureKey === 'fileViewer.publishFileEntryIndexConflict' ? publishConflict : null}
                         streaming={streaming}
                         sharePageUrl={sharePageUrl}
                         canCopyShareLink={canCopyShareLink}

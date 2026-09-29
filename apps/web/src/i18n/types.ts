@@ -4243,6 +4243,9 @@ export interface Dict {
   'fileViewer.shareUpdateRetry': string;
   'fileViewer.unpublishFileFailed': string;
   'fileViewer.publishFileTooLarge': string;
+  'fileViewer.publishFileEntryIndexConflict': string;
+  'fileViewer.copyFixForAgent': string;
+  'fileViewer.copyFixForAgentFailed': string;
   'fileViewer.workspaceShareSuccess': string;
   'fileViewer.workspaceShareFailed': string;
   'fileViewer.workspaceUnshareSuccess': string;
