@@ -6473,6 +6473,33 @@ export function ProjectView({
     [project.id, commitPreviewComments, projectRunWorkspaceContext],
   );
 
+  /**
+   * Invariant: a comment is 'applying' only while a run that carries it
+   * exists or is still going to be created. A queued send reserves its
+   * comments before any run exists, so every way that send can end without a
+   * run (held by a pre-run gate, stopped or failed before the run was
+   * created, taken out of the queue) gives them back to 'open'. A held send
+   * that starts later reserves them again when its run begins.
+   */
+  const releaseCommentsOfSendWithoutRun = useCallback(
+    (send: Pick<QueuedChatSend, 'conversationId' | 'commentAttachments'>) => {
+      const reservedCommentIds = new Set(
+        previewCommentsRef.current
+          .filter((comment) => comment.status === 'applying')
+          .map((comment) => comment.id),
+      );
+      releaseCommentsAfterUnsuccessfulRun(
+        send.commentAttachments
+          .filter(
+            (attachment) =>
+              attachment.source !== 'board-batch' && reservedCommentIds.has(attachment.id),
+          )
+          .map((attachment) => ({ id: attachment.id, conversationId: send.conversationId })),
+      );
+    },
+    [releaseCommentsAfterUnsuccessfulRun],
+  );
+
   // Maximum number of times we will retry fetching a null status for a
   // spuriouslyFailedPending run before treating the absence as authoritative
   // completion.  Transient null-status retries are bounded; after
@@ -8336,7 +8363,16 @@ export function ProjectView({
     commitQueuedChatSends(next);
   }, [commitQueuedChatSends]);
 
+  // The user taking a send out of the queue, as opposed to the drain removing
+  // one whose run has started.
+  const discardQueuedChatSend = useCallback((id: string) => {
+    const item = queuedChatSendsRef.current.find((candidate) => candidate.id === id);
+    removeQueuedChatSend(id);
+    if (item) releaseCommentsOfSendWithoutRun(item);
+  }, [releaseCommentsOfSendWithoutRun, removeQueuedChatSend]);
+
   const updateQueuedChatSend = useCallback((id: string, update: QueuedChatSendUpdate) => {
+    const edited = queuedChatSendsRef.current.find((item) => item.id === id);
     const next = queuedChatSendsRef.current.map((item) => {
       if (item.id !== id) return item;
       const meta = stripQueueOnlyFromMeta({ ...(item.meta ?? {}), ...(update.meta ?? {}) });
@@ -8351,7 +8387,16 @@ export function ProjectView({
       return updated;
     });
     commitQueuedChatSends(next);
-  }, [commitQueuedChatSends]);
+    if (edited) {
+      const keptCommentIds = new Set(update.commentAttachments.map((attachment) => attachment.id));
+      releaseCommentsOfSendWithoutRun({
+        conversationId: edited.conversationId,
+        commentAttachments: edited.commentAttachments.filter(
+          (attachment) => !keptCommentIds.has(attachment.id),
+        ),
+      });
+    }
+  }, [commitQueuedChatSends, releaseCommentsOfSendWithoutRun]);
 
   const prioritizeQueuedChatSend = useCallback((id: string) => {
     const item = queuedChatSendsRef.current.find((candidate) => candidate.id === id);
@@ -8389,6 +8434,9 @@ export function ProjectView({
     attachments: ChatAttachment[];
     commentAttachments: ChatCommentAttachment[];
     conversationId: string;
+    /** A pre-run gate is holding this send, so no run is coming on its own
+     *  and its comments are not reserved. */
+    heldBeforeRun?: boolean;
     meta?: ProjectChatSendMeta;
     prompt: string;
   }) => {
@@ -8416,7 +8464,7 @@ export function ProjectView({
       setAttachedComments((current) =>
         current.filter((comment) => !reservedCommentIds.has(comment.id)),
       );
-      if (reservedCommentIds.size > 0) {
+      if (reservedCommentIds.size > 0 && !input.heldBeforeRun) {
         commitPreviewComments((current) =>
           current.map((comment) =>
             reservedCommentIds.has(comment.id)
@@ -8831,7 +8879,7 @@ export function ProjectView({
           //
           // ⚠️ An EXHAUSTED wallet is not one of those states — see
           // `rejectBlockedSend` below (OPEND-2719).
-          const queueGateSend = (): boolean => {
+          const queueGateSend = (heldBeforeRun = false): boolean => {
             // 判定拒绝 = 这一轮不会有 run。先把已经画出去的那一轮收回,再决定
             // 它去哪儿 —— 三条拒绝路(会话切走 / 拦截 / 读不到)都经过这里,
             // 所以收回只写一处。放行那两档(soft / allow)碰不到它。
@@ -8842,6 +8890,7 @@ export function ProjectView({
                 prompt,
                 attachments: effectiveAttachments,
                 commentAttachments,
+                heldBeforeRun,
                 meta: { ...(meta ?? {}), sessionMode: runSessionMode, taskAnalytics },
               });
               return true;
@@ -8849,7 +8898,7 @@ export function ProjectView({
             return false;
           };
           const parkBlockedSend = (): boolean => {
-            const queued = queueGateSend();
+            const queued = queueGateSend(true);
             amrGatePausedQueueConversationsRef.current.add(gateConversationId);
             return queued;
           };
@@ -10924,6 +10973,24 @@ export function ProjectView({
     setSlideNavRequest({ name: target.filePath, slideIndex: target.slideIndex, nonce: Date.now() });
   }, []);
 
+  // Starts a queued send. One that ends without a run stays in the queue, but
+  // no longer holds its comments.
+  const startQueuedChatSend = useCallback(async (item: QueuedChatSend): Promise<boolean> => {
+    let started = false;
+    try {
+      started = await handleSend(
+        item.prompt,
+        item.attachments,
+        item.commentAttachments,
+        { ...(item.meta ?? {}), queueDrain: true },
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    if (!started) releaseCommentsOfSendWithoutRun(item);
+    return started;
+  }, [handleSend, releaseCommentsOfSendWithoutRun]);
+
   const sendQueuedChatSendNow = useCallback((id: string) => {
     const item = queuedChatSendsRef.current.find((candidate) => candidate.id === id);
     if (!item) return;
@@ -10951,15 +11018,10 @@ export function ProjectView({
     }
     void (async () => {
       armSlideNavForQueuedSend(item);
-      const started = await handleSend(
-        item.prompt,
-        item.attachments,
-        item.commentAttachments,
-        { ...(item.meta ?? {}), queueDrain: true },
-      );
+      const started = await startQueuedChatSend(item);
       if (started) removeQueuedChatSend(id);
     })();
-  }, [armSlideNavForQueuedSend, currentConversationBusy, handleSend, handleStop, prioritizeQueuedChatSend, removeQueuedChatSend]);
+  }, [armSlideNavForQueuedSend, currentConversationBusy, handleStop, prioritizeQueuedChatSend, removeQueuedChatSend, startQueuedChatSend]);
 
   /*
    * B11 「引导对话」 —— 队列行领头那颗按钮走的就是上面的
@@ -11014,12 +11076,7 @@ export function ProjectView({
     startingQueuedChatSendIdRef.current = next.id;
     armSlideNavForQueuedSend(next);
     void (async () => {
-      const started = await handleSend(
-        next.prompt,
-        next.attachments,
-        next.commentAttachments,
-        { ...(next.meta ?? {}), queueDrain: true },
-      );
+      const started = await startQueuedChatSend(next);
       if (!started) {
         if (startingQueuedChatSendIdRef.current === next.id) {
           startingQueuedChatSendIdRef.current = null;
@@ -11041,7 +11098,7 @@ export function ProjectView({
     currentConversationBusy,
     queuedAutoStartTick,
     queuedChatSends,
-    handleSend,
+    startQueuedChatSend,
     removeQueuedChatSend,
     scheduleProjectTimeout,
   ]);
@@ -12145,7 +12202,7 @@ export function ProjectView({
               ? retryPending.failedAssistantId : null,
             supersededErrorAssistantIds,
             onStop: handleStop,
-            onRemoveQueuedSend: removeQueuedChatSend,
+            onRemoveQueuedSend: discardQueuedChatSend,
             onUpdateQueuedSend: updateQueuedChatSend,
             onReorderQueuedSends: reorderCurrentConversationQueuedChatSends,
             // B11 「引导对话」: one button, always offered. The handler already
@@ -12173,7 +12230,7 @@ export function ProjectView({
       handleComposerSend,
       handleStop,
       messages,
-      removeQueuedChatSend,
+      discardQueuedChatSend,
       reorderCurrentConversationQueuedChatSends,
       sendQueuedChatSendNow,
       updateQueuedChatSend,
@@ -13807,7 +13864,7 @@ export function ProjectView({
               // 后台重挂可能发生在别的会话上,那一行不该串进这一屏。
               reconnect={reconnectViewForConversation(reconnectView, activeConversationId)}
               onManualReconnect={handleManualReconnect}
-              onRemoveQueuedSend={removeQueuedChatSend}
+              onRemoveQueuedSend={discardQueuedChatSend}
               onUpdateQueuedSend={updateQueuedChatSend}
               onReorderQueuedSends={reorderCurrentConversationQueuedChatSends}
               onSendQueuedNow={sendQueuedChatSendNow}
