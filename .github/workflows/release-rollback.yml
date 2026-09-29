@@ -131,21 +131,41 @@ jobs:
       # `latest` already moved — a half-done retraction is worse than a refused
       # one.
       - name: Assert the restored version has a GitHub Release
+        id: badge
         if: ${{ inputs.move_github_release }}
         env:
           GH_TOKEN: ${{ github.token }}
-          TO_TAG: v${{ inputs.to_version }}
+          PUBLIC_ORIGIN: ${{ vars.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
+          TO_VERSION: ${{ inputs.to_version }}
         run: |
           set -euo pipefail
-          if ! release="$(gh release view "$TO_TAG" --json tagName,isDraft,isPrerelease --repo "$GITHUB_REPOSITORY" 2>/dev/null)"; then
-            echo "::error::no GitHub Release for $TO_TAG; re-run with move_github_release=false if that is expected"
+          # The tag is NOT `v<version>`: prepare-stable.ts publishes
+          # `open-design-v<version>`, and a hand-built prefix here was wrong on
+          # the first live dry run. Read the authoritative value the publisher
+          # recorded in the release's own immutable metadata instead. Prefix
+          # candidates mirror rollback-latest.ts's ASSET_SUFFIXES.
+          to_tag=""
+          for suffix in "" ".signed" ".unsigned"; do
+            url="$PUBLIC_ORIGIN/stable/versions/${TO_VERSION}${suffix}/metadata.json?rollback=$GITHUB_RUN_ID"
+            candidate="$(curl -fsSL "$url" 2>/dev/null | jq -r '.versionTag // empty')" || continue
+            if [ -n "$candidate" ]; then to_tag="$candidate"; break; fi
+          done
+          if [ -z "$to_tag" ]; then
+            echo "::error::published metadata for $TO_VERSION has no versionTag; re-run with move_github_release=false"
+            exit 1
+          fi
+          echo "resolved release tag: $to_tag"
+          echo "to_tag=$to_tag" >> "$GITHUB_OUTPUT"
+
+          if ! release="$(gh release view "$to_tag" --json tagName,isDraft,isPrerelease --repo "$GITHUB_REPOSITORY" 2>/dev/null)"; then
+            echo "::error::no GitHub Release for $to_tag; re-run with move_github_release=false if that is expected"
             exit 1
           fi
           # Existing is not the same as eligible: GitHub will not put the Latest
           # badge on a draft or a prerelease, so the edit below would fail with
           # the R2 rollback already done.
           if [ "$(jq -r .isDraft <<<"$release")" != "false" ] || [ "$(jq -r .isPrerelease <<<"$release")" != "false" ]; then
-            echo "::error::GitHub Release $TO_TAG is a draft or prerelease and cannot be marked Latest; re-run with move_github_release=false"
+            echo "::error::GitHub Release $to_tag is a draft or prerelease and cannot be marked Latest; re-run with move_github_release=false"
             exit 1
           fi
 
@@ -194,7 +214,9 @@ jobs:
         if: ${{ !inputs.dry_run && inputs.move_github_release }}
         env:
           GH_TOKEN: ${{ github.token }}
-          TO_TAG: v${{ inputs.to_version }}
+          # Resolved from the restored release's own published metadata by the
+          # preflight above, never rebuilt from the version string here.
+          TO_TAG: ${{ steps.badge.outputs.to_tag }}
         run: |
           set -euo pipefail
           gh release edit "$TO_TAG" --latest --repo "$GITHUB_REPOSITORY"
@@ -228,7 +250,7 @@ jobs:
             echo ""
             echo "- [ ] Download page still links version-pinned installers for \`$FROM_VERSION\`; it needs a landing-site rebuild to advertise \`$TO_VERSION\`."
             echo "- [ ] In-app What's New card still shows the retracted copy; republish \`docs/whats-new.json\` from \`release/v$TO_VERSION\` via \`whats-new-publish\`."
-            echo "- [ ] The GitHub Release body for \`v$FROM_VERSION\` is untouched; add a retraction note by hand if users are landing on it."
+            echo "- [ ] The GitHub Release body for \`$FROM_VERSION\` is untouched; add a retraction note by hand if users are landing on it."
             echo "- [ ] Tell the release group what was retracted and why."
             echo "- [ ] Installs already on \`$FROM_VERSION\` need a roll-forward patch; a rollback cannot reach them."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -92,6 +92,25 @@ describe("release rollback workflow", () => {
     expect(preflight).toContain("jq -r .isPrerelease");
   });
 
+  it("[P0] reads the release tag from published metadata instead of rebuilding it", async () => {
+    const [rollback, prepareStable] = await Promise.all([
+      readFile(rollbackWorkflow, "utf8"),
+      readFile(new URL("../../../tools/release/src/metadata/prepare-stable.ts", import.meta.url), "utf8"),
+    ]);
+
+    // The published tag is `open-design-v<version>`, not `v<version>`. A
+    // hand-built prefix here looked right and failed on the first live dry
+    // run, so the tag comes from `.versionTag` in the restored release's own
+    // metadata — the value the publisher wrote.
+    expect(prepareStable).toContain("`open-design-v${packagedVersion}`");
+    expect(rollback).toContain("jq -r '.versionTag // empty'");
+    expect(rollback).toContain("TO_TAG: ${{ steps.badge.outputs.to_tag }}");
+    // No step may reconstruct a release tag from the version input. (A
+    // `release/v…` branch name is a different thing and stays allowed.)
+    expect(rollback).not.toMatch(/TO_TAG: v\$\{\{/);
+    expect(rollback).not.toMatch(/["`]v\$(TO_VERSION|FROM_VERSION)/);
+  });
+
   it("[P0] moves only the GitHub Release badge and never rewrites release copy", async () => {
     const rollback = await readFile(rollbackWorkflow, "utf8");
     const step = section(rollback, "      - name: Move the GitHub Release latest badge", "      - name: Publish the run summary");
