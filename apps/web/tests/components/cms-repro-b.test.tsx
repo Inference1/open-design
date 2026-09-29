@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Intentionally red acceptance specs against main. No production fixes here.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import type { TouchpointSdk } from "@open-design/contracts";
 
 const external = vi.hoisted(() => vi.fn(async () => true));
@@ -59,8 +59,8 @@ let sdk: TouchpointSdk;
 let clicked: Promise<void> | undefined;
 let diagnostics: string[];
 const captureDiagnostic = (event: Event) => diagnostics.push((event as CustomEvent).detail.code);
-let verify: ReturnType<typeof vi.spyOn<typeof component, "verifyWebTouchpoint">>;
-let importModule: ReturnType<typeof vi.spyOn<typeof component.webTouchpointModuleCache, "import">>;
+let verify: MockInstance<typeof component.verifyWebTouchpoint>;
+let importModule: MockInstance<typeof component.webTouchpointModuleCache.import>;
 
 beforeEach(() => {
 	vi.useFakeTimers();
@@ -202,7 +202,7 @@ describe("visual investigation witnesses (not pixel reproductions)", () => {
 		vi.stubGlobal("innerHeight", 1080);
 		vi.stubGlobal("visualViewport", undefined);
 		vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
+		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
 			return this.getAttribute("role") === "dialog"
 				? new DOMRect(0, 0, 480, 320) : new DOMRect(1840, 20, 24, 24);
 		});

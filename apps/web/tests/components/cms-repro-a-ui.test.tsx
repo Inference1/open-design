@@ -119,7 +119,7 @@ beforeEach(() => {
   window.history.replaceState({}, "", "/");
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
   vi.spyOn(document.documentElement, "lang", "get").mockReturnValue("en");
-  vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function () {
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function (this: HTMLElement) {
     return { length: hasBox && !this.hidden ? 1 : 0, item: () => null } as unknown as DOMRectList;
   });
   vi.stubGlobal("ResizeObserver", class {
@@ -131,7 +131,7 @@ beforeEach(() => {
   // jsdom cannot load verified blob ES modules. Only verification/material rendering is replaced;
   // request scheduling, locale resolution, mounts, visibility and acceptance POSTs remain real.
   vi.spyOn(component, "verifyWebTouchpoint").mockResolvedValue({ entryUrl: "blob:cms-repro", resourceUrls: new Map(), dispose: vi.fn() } as never);
-  vi.spyOn(component.OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (_url, _digest, host) {
+  vi.spyOn(component.OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: InstanceType<typeof component.OpenDesignTouchpointElement>, _url, _digest, host) {
     this.shadowRoot?.replaceChildren(document.createTextNode(`${host.placementKey}:${host.locale}`));
   });
   document.addEventListener("touchpointdiagnostic", diagnosticListener);
@@ -228,7 +228,7 @@ describe("OPEND-3327 acceptance receipts", () => {
     await settle(32);
     expect(receipts().map(body => body.placementKey)).toEqual([entry, layer]);
     for (const body of receipts()) {
-      const evidence = new URL(body.evidence);
+      const evidence = new URL(String(body.evidence));
       expect(evidence.searchParams.get("cmsTestDeployment")).toBe("deployment-a");
       expect(evidence.searchParams.get("cmsTestSnapshot")).toBe("sha256:snapshot");
       expect(evidence.searchParams.get("cmsTestPlacement")).toBe(body.placementKey);
@@ -250,12 +250,12 @@ describe("OPEND-3327 acceptance receipts", () => {
     await settle(32);
     // Local dedupe resets on locale selection; server-side idempotency is outside this test.
     expect(receipts()).toHaveLength(4);
-    expect(new Set(receipts().map(body => `${new URL(body.evidence).searchParams.get("cmsTestDeployment")}:${body.placementKey}`)).size).toBe(2);
+    expect(new Set(receipts().map(body => `${new URL(String(body.evidence)).searchParams.get("cmsTestDeployment")}:${body.placementKey}`)).size).toBe(2);
     await act(async () => { installSession("deployment-b"); });
     await settle(32);
     fireEvent.pointerEnter(hoverEntry()!);
     await settle(32);
-    expect(receipts().filter(body => new URL(body.evidence).searchParams.get("cmsTestDeployment") === "deployment-b").map(body => body.placementKey)).toEqual([entry, layer]);
+    expect(receipts().filter(body => new URL(String(body.evidence)).searchParams.get("cmsTestDeployment") === "deployment-b").map(body => body.placementKey)).toEqual([entry, layer]);
   });
 
   it.each(["500", "network", "timeout"] as const)("retries an entry receipt after one %s and subsequent hover/visibility", async failure => {
