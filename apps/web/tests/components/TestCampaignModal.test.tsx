@@ -340,6 +340,29 @@ describe("CMS modal host cleanup", () => {
 });
 
 describe("TestCampaignModal host guards", () => {
+	it("reopens only after an explicit Test replay and never clears impression history", async () => {
+		const subject = "explicit-test-replay";
+		const key = `touchpoint-displayed:v1:${subject}:activity-1`;
+		localStorage.setItem(key, "1");
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({ entryUrl: "blob:test", resourceUrls: new Map(), dispose: vi.fn() } as never);
+		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockResolvedValue();
+		const decision = runtime() as TestDecision;
+		authorizeMount(decision);
+		render(<ProductionCampaignModal authenticated sessionSubject={subject} />);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Reopen test activity" }));
+		await screen.findByRole("dialog");
+		fireEvent.keyDown(document, { key: "Escape" });
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(localStorage.getItem(key)).toBe("1");
+		fireEvent.click(screen.getByRole("button", { name: "Reopen test activity" }));
+		await screen.findByRole("dialog");
+		act(() => clearTestRuntimeSession());
+		expect(screen.queryByRole("button", { name: "Reopen test activity" })).toBeNull();
+		expect(screen.queryByRole("dialog")).toBeNull();
+		localStorage.removeItem(key);
+	});
+
 	it("closes a recorded open modal on a direct replacement deployment of the same activity", async () => {
 		const subject = "direct-redeployment-account";
 		const storageKey = `touchpoint-displayed:v1:${subject}:activity-1`;

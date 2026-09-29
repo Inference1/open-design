@@ -267,7 +267,7 @@ export function ProductionCampaignModal({
 	authenticated: boolean;
 	sessionSubject: string | null;
 }) {
-	const { locale } = useI18n();
+	const { locale, t } = useI18n();
 	const testRuntime = useTestRuntime();
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
 	// Test follows the production rule: one automatic presentation per account,
@@ -276,6 +276,13 @@ export function ProductionCampaignModal({
 	// recorded activity stays closed, as does a dismissed one.
 	const [dismissedTestCampaigns, setDismissedTestCampaigns] = useState<ReadonlySet<string>>(() => new Set());
 	const openTestCampaign = useRef<OpenTestPresentation | null>(null);
+	const [replaySelection, setReplaySelection] = useState<string | null>(null);
+	const replayKey = testRuntime && sessionSubject ? JSON.stringify([
+		sessionSubject, testRuntime.selectionKey, testRuntime.deployment.id, testRuntime.deployment.snapshotHash,
+		testRuntime.context.testerMemberId,
+	]) : null;
+	const replaying = replayKey !== null && replaySelection === replayKey;
+	useEffect(() => { setReplaySelection(null); }, [replayKey]);
 	const testActivityId = testDecision?.activityId;
 	const testCampaignKey = testDecision
 		? JSON.stringify([sessionSubject, testActivityId])
@@ -294,13 +301,14 @@ export function ProductionCampaignModal({
 		(!continuesOpenTestCampaign &&
 			!!sessionSubject &&
 			!!testActivityId &&
-			wasDisplayed(sessionSubject, testActivityId));
+			wasDisplayed(sessionSubject, testActivityId) && !replaying);
 	if (testCampaignKey !== null && testSelectionKey !== null)
 		openTestCampaign.current =
 			authenticated && !testClosed
 				? { campaignKey: testCampaignKey, selectionKey: testSelectionKey }
 				: null;
 	const closeTestModal = useCallback(() => {
+		setReplaySelection(null);
 		if (testCampaignKey !== null) {
 			setDismissedTestCampaigns(previous => new Set([...previous, testCampaignKey]));
 		}
@@ -671,6 +679,17 @@ export function ProductionCampaignModal({
 				/>
 			</CampaignModalFrame>
 		);
+	}
+	if (authenticated && sessionSubject && testRuntime && testDecision && testClosed && testRuntime.isAuthorized()) {
+		return <button type="button" className={styles.replay} onClick={() => {
+			if (!testRuntime.isAuthorized() || !replayKey || !testCampaignKey) return;
+			setReplaySelection(replayKey);
+			setDismissedTestCampaigns(previous => {
+				const next = new Set(previous);
+				next.delete(testCampaignKey);
+				return next;
+			});
+		}}>{t("campaign.testReplay")}</button>;
 	}
 	return authenticated && decision?.sessionSubject === sessionSubject ? (
 		<CampaignModalFrame presented={productionPresented} label="Campaign" modalRef={modalRef}>
