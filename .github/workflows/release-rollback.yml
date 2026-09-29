@@ -181,9 +181,11 @@ jobs:
           if [ -f "$SUMMARY_PATH" ]; then
             cat "$SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "## Rollback did not reach the write step" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "\`stable/latest\` was not modified. Read the job log for the refusal." >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "## Rollback did not reach the write step"
+              echo ""
+              echo "\`stable/latest\` was not modified. Read the job log for the refusal."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
           {
             echo ""
