@@ -5450,6 +5450,7 @@ export const th: Dict = {
   'comment.authorRole.member': 'สมาชิก',
   'comment.authorRole.sharePage': 'หน้าที่แชร์',
   'comment.sharePageCommentReadOnly': 'ไม่สามารถแก้ไขความคิดเห็นจากหน้าแชร์ได้',
+  'comment.unsentDiscardNotice': 'คุณมีความคิดเห็นที่ยังไม่ได้ส่ง คลิกอีกครั้งเพื่อละทิ้งและสลับ',
   'comment.anchorState.reanchored': 'อ้างอิงจากเวอร์ชันเก่า',
   'comment.anchorState.stale': 'จุดยึดอาจถูกย้ายแล้ว',
   'comment.anchorState.lost': 'ไม่พบจุดยึด',

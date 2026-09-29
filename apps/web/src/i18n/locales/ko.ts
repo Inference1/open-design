@@ -5450,6 +5450,7 @@ export const ko: Dict = {
   'comment.authorRole.member': '구성원',
   'comment.authorRole.sharePage': '공유 페이지',
   'comment.sharePageCommentReadOnly': '공유 페이지의 댓글은 수정할 수 없습니다.',
+  'comment.unsentDiscardNotice': '보내지 않은 댓글이 있습니다. 다시 클릭하면 삭제하고 전환합니다.',
   'comment.anchorState.reanchored': '이전 버전을 기준으로 함',
   'comment.anchorState.stale': '앵커가 이동했을 수 있습니다',
   'comment.anchorState.lost': '앵커를 찾을 수 없습니다',

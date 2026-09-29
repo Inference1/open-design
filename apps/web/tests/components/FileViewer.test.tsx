@@ -12476,6 +12476,181 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByTestId('annotation-style-summary')).toBeNull();
   });
 
+  describe('picking while the composer holds unsent work', () => {
+    const discardNotice = 'You have an unsent comment. Click again to discard it and switch.';
+    const savedComment: PreviewComment = {
+      id: 'comment-saved-pin',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      filePath: 'preview.html',
+      elementId: 'pin-saved',
+      selector: '[data-od-pin="pin-saved"]',
+      label: 'pin-saved',
+      text: '',
+      htmlHint: '',
+      position: { x: 40, y: 52, width: 18, height: 18 },
+      note: 'Saved note',
+      status: 'open',
+      createdAt: 10,
+      updatedAt: 10,
+    };
+
+    function renderViewer(previewComments: PreviewComment[] = []) {
+      render(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile()}
+          liveHtml='<html><body><main data-od-id="hero">Hero</main><p data-od-id="lede">Lede</p></body></html>'
+          previewComments={previewComments}
+        />,
+      );
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+      return frame;
+    }
+
+    function postFromPreview(frame: HTMLIFrameElement, data: Record<string, unknown>) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, data }));
+      });
+    }
+
+    const heroTarget = {
+      elementId: 'hero',
+      selector: '[data-od-id="hero"]',
+      label: 'Hero heading',
+      text: 'Hero',
+      position: { x: 8, y: 12, width: 312, height: 63 },
+      htmlHint: '<main data-od-id="hero">Hero</main>',
+    };
+    const ledeTarget = {
+      elementId: 'lede',
+      selector: '[data-od-id="lede"]',
+      label: 'Lede paragraph',
+      text: 'Lede',
+      position: { x: 8, y: 120, width: 312, height: 40 },
+      htmlHint: '<p data-od-id="lede">Lede</p>',
+    };
+
+    function pickElement(frame: HTMLIFrameElement, target: typeof heroTarget) {
+      postFromPreview(frame, { type: 'od:comment-target', ...target });
+    }
+
+    async function draftOnHero(frame: HTMLIFrameElement, draft: string) {
+      pickElement(frame, heroTarget);
+      const input = await screen.findByTestId('comment-popover-input') as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: draft } });
+    }
+
+    function composerDraft() {
+      return (screen.getByTestId('comment-popover-input') as HTMLTextAreaElement).value;
+    }
+
+    function composerTitle() {
+      return screen.getByTestId('comment-popover').querySelector('.comment-popover-title')?.textContent;
+    }
+
+    function expectDraftKeptOnHero(draft: string) {
+      expect(composerDraft()).toBe(draft);
+      expect(composerTitle()).toBe('Hero heading');
+      expect(screen.getByText(discardNotice)).toBeTruthy();
+    }
+
+    it('keeps the draft and its target on the first element pick, and discards on the second', async () => {
+      const frame = renderViewer();
+      await draftOnHero(frame, 'Unsent thought');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+
+      pickElement(frame, ledeTarget);
+      expectDraftKeptOnHero('Unsent thought');
+
+      pickElement(frame, ledeTarget);
+      expect(composerTitle()).toBe('Lede paragraph');
+      expect(composerDraft()).toBe('');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+
+    it('retargets at once when the composer holds nothing unsent', async () => {
+      const frame = renderViewer();
+      pickElement(frame, heroTarget);
+      await screen.findByTestId('comment-popover-input');
+
+      pickElement(frame, ledeTarget);
+      expect(composerTitle()).toBe('Lede paragraph');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+
+    it('disarms the pending discard when the draft is edited', async () => {
+      const frame = renderViewer();
+      await draftOnHero(frame, 'Unsent thought');
+      pickElement(frame, ledeTarget);
+      expect(screen.getByText(discardNotice)).toBeTruthy();
+
+      fireEvent.change(screen.getByTestId('comment-popover-input'), {
+        target: { value: 'Unsent thought, continued' },
+      });
+      expect(screen.queryByText(discardNotice)).toBeNull();
+
+      pickElement(frame, ledeTarget);
+      expectDraftKeptOnHero('Unsent thought, continued');
+    });
+
+    it('guards a lasso selection the same way', async () => {
+      const frame = renderViewer();
+      postFromPreview(frame, { type: 'od:comment-targets', targets: [heroTarget, ledeTarget] });
+      await draftOnHero(frame, 'Unsent thought');
+      const lasso = {
+        type: 'od:pod-select',
+        points: [{ x: 4, y: 110 }, { x: 330, y: 110 }, { x: 330, y: 170 }, { x: 4, y: 170 }, { x: 4, y: 110 }],
+      };
+
+      postFromPreview(frame, lasso);
+      expectDraftKeptOnHero('Unsent thought');
+
+      postFromPreview(frame, lasso);
+      expect(composerTitle()).not.toBe('Hero heading');
+      expect(composerDraft()).toBe('');
+    });
+
+    it('guards opening a saved pin the same way', async () => {
+      const frame = renderViewer([savedComment]);
+      await draftOnHero(frame, 'Unsent thought');
+      const pin = screen.getByRole('button', { name: 'Open comment for pin-saved' });
+
+      fireEvent.click(pin);
+      expectDraftKeptOnHero('Unsent thought');
+
+      fireEvent.click(pin);
+      expect(composerDraft()).toBe('Saved note');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+
+    it('guards selecting a comment in the side panel the same way', async () => {
+      const frame = renderViewer([savedComment]);
+      await draftOnHero(frame, 'Unsent thought');
+      const card = screen.getByText('Saved note');
+
+      fireEvent.click(card);
+      expectDraftKeptOnHero('Unsent thought');
+
+      fireEvent.click(card);
+      expect(composerDraft()).toBe('Saved note');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+
+    it('lets an opened saved comment go without a notice while its note is unchanged', async () => {
+      const frame = renderViewer([savedComment]);
+      fireEvent.click(screen.getByRole('button', { name: 'Open comment for pin-saved' }));
+      expect((await screen.findByTestId('comment-popover-input') as HTMLTextAreaElement).value)
+        .toBe('Saved note');
+
+      pickElement(frame, heroTarget);
+      expect(composerTitle()).toBe('Hero heading');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+  });
+
   it('keeps the comment panel closed after saving an annotation comment', async () => {
     function Harness() {
       const [comments, setComments] = useState<PreviewComment[]>([]);

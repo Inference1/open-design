@@ -1170,6 +1170,7 @@ export interface Dict {
   'comment.authorRole.member': string;
   'comment.authorRole.sharePage': string;
   'comment.sharePageCommentReadOnly': string;
+  'comment.unsentDiscardNotice': string;
   'comment.anchorState.reanchored': string;
   'comment.anchorState.stale': string;
   'comment.anchorState.lost': string;

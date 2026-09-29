@@ -816,6 +816,7 @@ export const fa: Dict = {
   'comment.authorRole.member': 'عضو',
   'comment.authorRole.sharePage': 'صفحه اشتراک‌گذاری',
   'comment.sharePageCommentReadOnly': 'نظرات صفحه اشتراک‌گذاری قابل ویرایش نیستند.',
+  'comment.unsentDiscardNotice': 'یک دیدگاه ارسال‌نشده دارید. برای دور انداختن آن و جابه‌جایی دوباره کلیک کنید.',
   'comment.anchorState.reanchored': 'بر اساس نسخه قدیمی‌تر',
   'comment.anchorState.stale': 'ممکن است لنگر جابه‌جا شده باشد',
   'comment.anchorState.lost': 'لنگر گم شده است',

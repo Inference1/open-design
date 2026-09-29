@@ -270,6 +270,7 @@ import {
   canSendCommentToAgent as canSendCommentToAgentPure,
   type CommentAuthorityContext,
 } from '../comments/comment-authority';
+import { composerHasUnsentWork } from '../comments/composer-unsent-work';
 import { RemixIcon } from './RemixIcon';
 import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
 import { HandoffButton } from './HandoffButton';
@@ -9308,6 +9309,37 @@ function HtmlViewer({
       next.forEach((item) => URL.revokeObjectURL(item.url));
     };
   }, [boardImages]);
+  // Read through refs inside the preview message listener, so a keystroke in
+  // the draft does not re-subscribe it.
+  const composerHoldsUnsentWork = composerHasUnsentWork({
+    draft: commentDraft,
+    queuedNoteCount: queuedBoardNotes.length,
+    freshImageCount: boardImages.length,
+    savedNote: currentActiveComposerComment()?.note ?? null,
+  });
+  const composerHoldsUnsentWorkRef = useRef(composerHoldsUnsentWork);
+  composerHoldsUnsentWorkRef.current = composerHoldsUnsentWork;
+  const composerDiscardArmedRef = useRef(false);
+  const [composerDiscardPending, setComposerDiscardPending] = useState(false);
+  const disarmComposerDiscard = useCallback(() => {
+    composerDiscardArmedRef.current = false;
+    setComposerDiscardPending(false);
+  }, []);
+  /**
+   * Invariant: a pick never silently throws away unsent composer work. While
+   * the composer holds any, the first pick changes nothing and only arms the
+   * discard, which shows the notice; the next pick confirms it and retargets.
+   * Editing the draft disarms. Every pick path retargets through here.
+   */
+  const requestComposerRetarget = useCallback((applyRetarget: () => void) => {
+    if (composerHoldsUnsentWorkRef.current && !composerDiscardArmedRef.current) {
+      composerDiscardArmedRef.current = true;
+      setComposerDiscardPending(true);
+      return;
+    }
+    disarmComposerDiscard();
+    applyRetarget();
+  }, [disarmComposerDiscard]);
   const [commentSavedToast, setCommentSavedToast] = useState<string | null>(null);
   const [templateSavedToast, setTemplateSavedToast] = useState<string | null>(null);
   const [deploySavedToast, setDeploySavedToast] = useState<{ message: string; details: string } | null>(null);
@@ -12665,19 +12697,23 @@ function HtmlViewer({
         if (!snapshot.elementId || !isValidCommentOverlayPosition(snapshot.position)) return;
         const shouldOpenComposer = boardMode || commentCreateMode;
         cancelHoverCardDismiss();
-        setActiveCommentTarget((current) => (shouldOpenComposer ? snapshot : current));
-        setHoveredCommentTarget(snapshot);
         setLiveCommentTargets((current) => {
           const existing = current.get(snapshot.elementId);
           if (existing && commentSnapshotEqual(existing, snapshot)) return current;
           return new Map(current).set(snapshot.elementId, snapshot);
         });
-        if (shouldOpenComposer) {
+        if (!shouldOpenComposer) {
+          setHoveredCommentTarget(snapshot);
+          return;
+        }
+        requestComposerRetarget(() => {
+          setActiveCommentTarget(snapshot);
+          setHoveredCommentTarget(snapshot);
           setActivePreviewCommentId(null);
           setCommentDraft('');
           setQueuedBoardNotes([]);
           setActiveCommentExistingAttachments([]);
-        }
+        });
         return;
       }
       if (data.type === 'od:pod-clear') {
@@ -12708,18 +12744,20 @@ function HtmlViewer({
           setStrokePoints([]);
           return;
         }
-        setActiveCommentTarget(nextTarget);
-        setHoveredCommentTarget(nextTarget);
-        setActivePreviewCommentId(null);
-        setQueuedBoardNotes([]);
-        setCommentDraft('');
-        setActiveCommentExistingAttachments([]);
+        requestComposerRetarget(() => {
+          setActiveCommentTarget(nextTarget);
+          setHoveredCommentTarget(nextTarget);
+          setActivePreviewCommentId(null);
+          setQueuedBoardNotes([]);
+          setCommentDraft('');
+          setActiveCommentExistingAttachments([]);
+        });
         setStrokePoints([]);
       }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, scheduleHoverCardDismiss, workspaceActive]);
+  }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, requestComposerRetarget, scheduleHoverCardDismiss, workspaceActive]);
 
   useEffect(() => {
     if (!workspaceActive || !boardMode || !activeCommentTarget || activeCommentTarget.selectionKind === 'pod') return;
@@ -14867,6 +14905,7 @@ function HtmlViewer({
   }
 
   function clearBoardComposer() {
+    disarmComposerDiscard();
     setActiveCommentTarget(null);
     setHoveredCommentTarget(null);
     setHoveredPodMemberId(null);
@@ -16421,7 +16460,11 @@ function HtmlViewer({
       canSendToAgent={canSendActiveComment}
       draft={commentDraft}
       notes={queuedBoardNotes}
-      onDraft={setCommentDraft}
+      discardPending={composerDiscardPending && composerHoldsUnsentWork}
+      onDraft={(value) => {
+        disarmComposerDiscard();
+        setCommentDraft(value);
+      }}
       onAddDraft={queueCurrentDraft}
       onRemoveQueuedNote={(index) =>
         setQueuedBoardNotes((current) => current.filter((_, currentIndex) => currentIndex !== index))
@@ -16579,16 +16622,18 @@ function HtmlViewer({
           podMembers: comment.podMembers,
           ...(typeof comment.slideIndex === 'number' ? { slideIndex: comment.slideIndex } : {}),
         };
-        setActiveCommentTarget(snapshot);
-        setHoveredCommentTarget(snapshot);
-        setActivePreviewCommentId(comment.id);
-        setCommentDraft(comment.note);
-        setQueuedBoardNotes([]);
-        setActiveCommentExistingAttachments(comment.attachments ?? []);
-        setBoardMode(true);
-        setCommentCreateMode(true);
-        setCommentPanelOpen(true);
-        setCommentSidePanelCollapsed(false);
+        requestComposerRetarget(() => {
+          setActiveCommentTarget(snapshot);
+          setHoveredCommentTarget(snapshot);
+          setActivePreviewCommentId(comment.id);
+          setCommentDraft(comment.note);
+          setQueuedBoardNotes([]);
+          setActiveCommentExistingAttachments(comment.attachments ?? []);
+          setBoardMode(true);
+          setCommentCreateMode(true);
+          setCommentPanelOpen(true);
+          setCommentSidePanelCollapsed(false);
+        });
       }}
       onSendSelected={async () => {
         if (!onSendBoardCommentAttachments) return;
@@ -17806,16 +17851,18 @@ function HtmlViewer({
                   strokePoints={strokePoints}
                   activeSlideIndex={effectiveDeck ? slideState?.active ?? null : null}
                   onOpenComment={(comment, snapshot) => {
-                    setCommentPanelOpen(true);
-                    setCommentSidePanelCollapsed(false);
-                    setCommentCreateMode(true);
-                    setBoardMode(true);
-                    setActiveCommentTarget(snapshot);
-                    setHoveredCommentTarget(snapshot);
-                    setActivePreviewCommentId(comment.id);
-                    setCommentDraft(comment.note);
-                    setQueuedBoardNotes([]);
-                    setActiveCommentExistingAttachments(comment.attachments ?? []);
+                    requestComposerRetarget(() => {
+                      setCommentPanelOpen(true);
+                      setCommentSidePanelCollapsed(false);
+                      setCommentCreateMode(true);
+                      setBoardMode(true);
+                      setActiveCommentTarget(snapshot);
+                      setHoveredCommentTarget(snapshot);
+                      setActivePreviewCommentId(comment.id);
+                      setCommentDraft(comment.note);
+                      setQueuedBoardNotes([]);
+                      setActiveCommentExistingAttachments(comment.attachments ?? []);
+                    });
                   }}
                 />
               ) : null}

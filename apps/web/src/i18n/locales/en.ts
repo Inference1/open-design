@@ -816,6 +816,7 @@ export const en: Dict = {
   'comment.authorRole.member': 'Member',
   'comment.authorRole.sharePage': 'Share page',
   'comment.sharePageCommentReadOnly': 'Comments from the share page can\'t be edited.',
+  'comment.unsentDiscardNotice': 'You have an unsent comment. Click again to discard it and switch.',
   'comment.anchorState.reanchored': 'based on an older version',
   'comment.anchorState.stale': 'anchor may have moved',
   'comment.anchorState.lost': 'anchor lost',

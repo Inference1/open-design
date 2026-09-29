@@ -5903,6 +5903,7 @@ export const zhTW: Dict = {
   'comment.authorRole.member': '成員',
   'comment.authorRole.sharePage': '分享頁',
   'comment.sharePageCommentReadOnly': '分享頁留言不可編輯。',
+  'comment.unsentDiscardNotice': '有尚未送出的評論。再次點擊將捨棄並切換。',
   'comment.anchorState.reanchored': '基於較舊版本',
   'comment.anchorState.stale': '錨點可能已移動',
   'comment.anchorState.lost': '錨點已遺失',
