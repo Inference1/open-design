@@ -245,6 +245,10 @@ export function ProductionCampaignHover({
 		() => lifecycle.isCurrent(lifecycle.generation),
 		[lifecycle.isCurrent, lifecycle.generation],
 	);
+	const onProductionFencedMount = useCallback(
+		() => lifecycle.reportFencedMount(lifecycle.generation),
+		[lifecycle.generation, lifecycle.reportFencedMount],
+	);
 	const onTestVisible = useCallback(
 		(decision: TestDecision, placementKey: TestCampaignPlacement) => {
 			if (testRuntime)
@@ -311,6 +315,7 @@ export function ProductionCampaignHover({
 			entry={active.entry.decision.content}
 			layer={active.layer.decision.content}
 			isAuthorized={isProductionAuthorized}
+			onFencedMount={onProductionFencedMount}
 			entryActionIds={active.entry.actionIds}
 			layerActionIds={active.layer.actionIds}
 			onDiagnostic={onDiagnostic}
