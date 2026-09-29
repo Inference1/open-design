@@ -487,7 +487,7 @@ describe('preview comment permission gating', () => {
     expect(created.body.comment).toMatchObject({
       authorMemberId: 'm-author',
     });
-    expect(created.body.comment).not.toHaveProperty('authorKind');
+    expect(created.body.comment.authorKind).toBe('member');
     expect(created.body.comment).not.toHaveProperty('authorAppUserId');
     expect(created.body.comment).not.toHaveProperty('authorDisplayName');
     expect(created.body.comment).not.toHaveProperty('authorKey');
@@ -536,7 +536,7 @@ describe('preview comment permission gating', () => {
       authorMemberId: 'm-author',
       note: 'trusted edit',
     });
-    expect(edited.body.comment).not.toHaveProperty('authorKind');
+    expect(edited.body.comment.authorKind).toBe('member');
     expect(edited.body.comment).not.toHaveProperty('authorAppUserId');
     expect(edited.body.comment).not.toHaveProperty('authorDisplayName');
     expect(edited.body.comment).not.toHaveProperty('authorKey');

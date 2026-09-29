@@ -81,10 +81,9 @@ vi.mock('../../src/components/EntryView', () => ({
   EntryView: () => <div>Entry view</div>,
 }));
 
-vi.mock('../../src/components/CloudSignInTip', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../src/components/CloudSignInTip')>(),
-  CloudSignInTip: ({ onLoginSuccess }: { onLoginSuccess?: () => void }) => (
-    <button onClick={() => onLoginSuccess?.()}>Sign in to update</button>
+vi.mock('../../src/components/share/ShareSignInButton', () => ({
+  ShareSignInButton: ({ actionLabel, onLoginSuccess }: { actionLabel: string; onLoginSuccess?: () => void }) => (
+    <button onClick={() => onLoginSuccess?.()}>{actionLabel}</button>
   ),
 }));
 
@@ -395,6 +394,7 @@ describe('project route — floating account cluster', () => {
   });
 
   it('S13 retains only an observed active same-project link for copy when a bound route signs out', async () => {
+    useRouteMock.mockReturnValue({ ...PROJECT_ROUTE, fileName: 'index.html' });
     vi.mocked(fetchVelaLoginStatus).mockResolvedValue({
       loggedIn: true, profile: 'default', configPath: '', user: { id: 'account-1', email: 'owner@example.invalid' },
     });
@@ -439,6 +439,7 @@ describe('project route — floating account cluster', () => {
     ['different account', 'account-2', false, false],
     ['same account after file B then A', 'account-1', false, true],
   ] as const)('S13 explicit sign-in-to-update resumes only for %s', async (_label, accountId, allowed, switchFile) => {
+    useRouteMock.mockReturnValue({ ...PROJECT_ROUTE, fileName: 'index.html' });
     vi.mocked(fetchVelaLoginStatus).mockResolvedValue({
       loggedIn: true, profile: 'default', configPath: '', user: { id: 'account-1', email: 'owner@example.invalid' },
     });
@@ -471,11 +472,11 @@ describe('project route — floating account cluster', () => {
     view.rerender(<App />);
     await screen.findByText('Project view');
     await waitFor(() => {
-      const lastRequest = projectViewLoginUpdateRequestMock.mock.lastCall?.[0];
-      if (allowed) expect(lastRequest).toEqual(expect.objectContaining({
+      const requests = projectViewLoginUpdateRequestMock.mock.calls.map(([request]) => request);
+      if (allowed) expect(requests).toContainEqual(expect.objectContaining({
         accountId: 'account-1', link: expect.objectContaining({ slug: 'prior', freshness: 'outdated' }),
       }));
-      else expect(lastRequest).toBeNull();
+      else expect(requests.at(-1)).toBeNull();
     });
   });
 
