@@ -41,7 +41,7 @@ test('capture Owner-S9-R while resume-only request is pending', async ({ page })
     expect(route.request().postDataJSON()).toEqual({ mode: 'resume' });
     started();
     await gate;
-    await route.fulfill({ json: { url: 'https://viewer.example.test/cloud/artifact/project/s9r-original', slug: 's9r-original', fileName: 'index.html' } });
+    await route.fulfill({ json: { status: 'published', receipt: { filePath: 'index.html', slug: 's9r-original', publishedAt: Date.now(), version: 1, versionId: 'ui-audit-v1', entryPath: 'index.html' }, url: 'https://viewer.example.test/cloud/artifact/project/s9r-original' } });
   });
   await menu.getByRole('switch', { name: '链接访问' }).click();
   try {

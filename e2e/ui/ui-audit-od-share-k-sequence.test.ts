@@ -109,7 +109,7 @@ test('Owner-K1 first publication syncs existing comments', async ({ page }) => {
     startedK1();
     await k1Gate;
     k1Pub.setState('active');
-    await route.fulfill({ json: { url: k1Pub.url, slug: k1Pub.slug, fileName: 'index.html' } });
+    await route.fulfill({ json: { status: 'published', receipt: { filePath: 'index.html', slug: k1Pub.slug, publishedAt: Date.now(), version: 1, versionId: 'ui-audit-v1', entryPath: 'index.html' }, url: k1Pub.url } });
   });
   const k1Menu = await openShareMenu(page, k1.projectId);
   await k1Menu.getByRole('menuitem').filter({ hasText: /生成并复制链接|Generate and copy/ }).click();
@@ -166,7 +166,7 @@ test('Owner-K4/K5 distinct comment-sync capture sequences', async ({ page }) => 
   await page.route(`**/api/projects/${k4.projectId}/files/index.html/publish-public`, route => {
     if (route.request().method() !== 'POST') return route.fallback();
     k4Pub.setState('active');
-    return route.fulfill({ json: { url: k4Pub.url, slug: k4Pub.slug, fileName: 'index.html' } });
+    return route.fulfill({ json: { status: 'published', receipt: { filePath: 'index.html', slug: k4Pub.slug, publishedAt: Date.now(), version: 1, versionId: 'ui-audit-v1', entryPath: 'index.html' }, url: k4Pub.url } });
   });
   await page.route(`**/api/projects/${k4.projectId}/comment-sync-state*`, route => route.request().method() === 'GET'
     ? route.fulfill({ json: { pending: 1, sessionMissing: false, lastError: null, shareStopped: false, backfill: { state: 'pending', filePath: 'index.html', publicationRevision: 'k4-revision', retryable: true, reopened: true } } })
@@ -194,7 +194,7 @@ test('Owner-K4/K5 distinct comment-sync capture sequences', async ({ page }) => 
   await page.route(`**/api/projects/${k5.projectId}/files/index.html/publish-public`, route => {
     if (route.request().method() !== 'POST') return route.fallback();
     k5Pub.setState('active');
-    return route.fulfill({ json: { url: k5Pub.url, slug: k5Pub.slug, fileName: 'index.html' } });
+    return route.fulfill({ json: { status: 'published', receipt: { filePath: 'index.html', slug: k5Pub.slug, publishedAt: Date.now(), version: 1, versionId: 'ui-audit-v1', entryPath: 'index.html' }, url: k5Pub.url } });
   });
   await page.route(`**/api/projects/${k5.projectId}/comment-sync-state*`, route => route.request().method() === 'GET'
     ? route.fulfill({ json: { pending: 0, sessionMissing: false, lastError: 'backfill_failed', shareStopped: false, backfill: { state: 'failed', filePath: 'index.html', publicationRevision: 'k5-revision', retryable: true, reopened: true } } })
