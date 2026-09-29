@@ -368,6 +368,19 @@ export function recordVisibleTestTouchpoint(
 		});
 }
 
+/**
+ * A campaign CTA hands the user to its target and ends the presentation with
+ * it: an accepted action closes the host modal, while a refused, expired or
+ * failed one rejects to the component and leaves the modal where it is.
+ */
+export async function completeCampaignAction(
+	accepted: Promise<boolean>,
+	requestClose: (() => void) | undefined,
+): Promise<void> {
+	requireCampaignAction(await accepted);
+	requestClose?.();
+}
+
 export type TestTouchpointMountProps = Readonly<{
 	decision: TestDecision;
 	placementKey: TestCampaignPlacement;
@@ -380,6 +393,11 @@ export type TestTouchpointMountProps = Readonly<{
 	requestClose?: () => void;
 	isAuthorized: () => boolean;
 	onCloseControlChange?: (available: boolean | null) => void;
+	/**
+	 * Reports that content became ready (`true`) or failed to verify or mount
+	 * (`false`). A replacement in flight reports nothing until it settles.
+	 */
+	onPresentedChange?: (presented: boolean) => void;
 }>;
 
 /** Mounts one immutable v2 placement in the real OpenDesign Shadow DOM host. */
@@ -392,6 +410,7 @@ export function TestTouchpointMount({
 	requestClose,
 	isAuthorized,
 	onCloseControlChange,
+	onPresentedChange,
 }: TestTouchpointMountProps) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const [ready, setReady] = useState(false);
@@ -413,25 +432,33 @@ export function TestTouchpointMount({
 			locale: decision.content.locale,
 			isCurrent: authorized,
 			dispatchAction: async (id) => {
-				requireCampaignAction(await dispatchTestCampaignAction(decision, id));
+				await completeCampaignAction(
+					dispatchTestCampaignAction(decision, id),
+					requestClose,
+				);
 			},
 			requestClose,
 			onCloseControlChange,
 			onReady: () => {
-				if (authorized()) setReady(true);
+				if (!authorized()) return;
+				setReady(true);
+				onPresentedChange?.(true);
 			},
 			onVisible: () => {
 				if (authorized()) onVisible(decision, placementKey);
 			},
-			onError: (error) =>
+			onError: (error) => {
 				emitWebTouchpointDiagnostic({
 					code: error,
-				}),
+				});
+				onPresentedChange?.(false);
+			},
 		});
 	}, [
 		decision,
 		isAuthorized,
 		onCloseControlChange,
+		onPresentedChange,
 		onVisible,
 		placementKey,
 		requestClose,

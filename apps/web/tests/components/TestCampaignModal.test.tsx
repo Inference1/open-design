@@ -208,6 +208,16 @@ function TestCampaignHarness({
 	);
 }
 beforeEach(() => {
+	// jsdom cannot import the verified Blob entry. The modal is presented only
+	// once content has mounted, so stand in for a successful mount as the
+	// Production suite does; cases that exercise mount failures override it.
+	vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
+		async function (this: OpenDesignTouchpointElement) {
+			this.shadowRoot?.replaceChildren(
+				document.createTextNode("Verified campaign"),
+			);
+		},
+	);
 	window.history.replaceState(null, "", "/?cmsTestControls=1");
 	(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
 		version: 2,

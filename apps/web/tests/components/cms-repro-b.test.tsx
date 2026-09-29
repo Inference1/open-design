@@ -171,19 +171,22 @@ describe("stuck gray backdrop", () => {
 });
 
 describe("visual investigation witnesses (not pixel reproductions)", () => {
-	it.each(["Production", "Test"] as const)("OPEND-3286 %s focuses the outer modal on entry and re-entry", async (mode) => {
+	it.each(["Production", "Test"] as const)("OPEND-3286 %s focuses the shadow CTA, not the outer modal, on entry and re-entry", async (mode) => {
 		for (let entry = 0; entry < 2; entry++) {
 			await show(mode);
 			const button = mountedButton();
 			const modal = screen.getByRole("dialog").firstElementChild;
-			expect(document.activeElement).toBe(modal);
+			expect(document.activeElement).not.toBe(modal);
+			expect(document.activeElement).toBe(button.getRootNode() instanceof ShadowRoot ? (button.getRootNode() as ShadowRoot).host : null);
+			expect((button.getRootNode() as ShadowRoot).activeElement).toBe(button);
 			expect(modal?.querySelector("button")).toBeNull();
-			expect(button.getRootNode()).toBeInstanceOf(ShadowRoot);
 			cleanup();
 		}
-		// jsdom cannot paint Chromium's platform focus ring. This assertion is a
-		// causal witness, not a requirement to keep the container focused. With
-		// no layout rectangles/RAF paint, these mounts record no impression.
+		// jsdom cannot paint Chromium's platform focus ring. On main this witness
+		// recorded the outer container receiving focus (the light-DOM query could
+		// not reach the ShadowRoot); the fix focuses the CTA through composed
+		// traversal. With no layout rectangles/RAF paint, these mounts record no
+		// impression.
 	});
 	it("OPEND-3310 the custom-element host propagates background even outside component content", async () => {
 		const read = vi.spyOn(component, "readWebTouchpointHostContext");
