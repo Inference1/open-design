@@ -13693,7 +13693,8 @@ describe('FileViewer tweaks toolbar', () => {
   it('keeps relative comment-time boundaries stable across clock boundaries', () => {
     vi.useFakeTimers();
     try {
-      const now = new Date('2026-01-01T00:30:00.000Z');
+      // Local noon keeps the one-hour case on the same calendar day in every timezone.
+      const now = new Date(2026, 0, 2, 12, 30, 0);
       vi.setSystemTime(now);
       const commentAt = (id: string, elapsedMs: number): PreviewComment => ({
         id, projectId: 'project-1', conversationId: 'conversation-1', filePath: 'preview.html',
