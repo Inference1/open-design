@@ -5453,6 +5453,7 @@ export const ru: Dict = {
   'comment.authorRole.member': 'Участник',
   'comment.authorRole.sharePage': 'Страница общего доступа',
   'comment.sharePageCommentReadOnly': 'Комментарии со страницы доступа по ссылке нельзя редактировать.',
+  'comment.unsentDiscardNotice': 'У вас есть неотправленный комментарий. Нажмите ещё раз, чтобы отменить его и переключиться.',
   'comment.anchorState.reanchored': 'на основе более ранней версии',
   'comment.anchorState.stale': 'привязка могла переместиться',
   'comment.anchorState.lost': 'привязка потеряна',

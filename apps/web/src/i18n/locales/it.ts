@@ -5453,6 +5453,7 @@ export const it: Dict = {
   'comment.authorRole.member': 'Membro',
   'comment.authorRole.sharePage': 'Pagina condivisa',
   'comment.sharePageCommentReadOnly': 'I commenti dalla pagina di condivisione non possono essere modificati.',
+  'comment.unsentDiscardNotice': 'Hai un commento non inviato. Fai di nuovo clic per scartarlo e cambiare.',
   'comment.anchorState.reanchored': 'basato su una versione precedente',
   'comment.anchorState.stale': 'l’ancora potrebbe essere stata spostata',
   'comment.anchorState.lost': 'ancora persa',

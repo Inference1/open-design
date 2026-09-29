@@ -5453,6 +5453,7 @@ export const pl: Dict = {
   'comment.authorRole.member': 'Członek',
   'comment.authorRole.sharePage': 'Udostępniona strona',
   'comment.sharePageCommentReadOnly': 'Komentarzy ze strony udostępniania nie można edytować.',
+  'comment.unsentDiscardNotice': 'Masz niewysłany komentarz. Kliknij ponownie, aby go odrzucić i przełączyć.',
   'comment.anchorState.reanchored': 'na podstawie starszej wersji',
   'comment.anchorState.stale': 'kotwica mogła zostać przeniesiona',
   'comment.anchorState.lost': 'kotwica utracona',

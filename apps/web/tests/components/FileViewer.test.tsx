@@ -7090,7 +7090,10 @@ describe('FileViewer SVG artifacts', () => {
     fireEvent.click(stopSwitch);
 
     await waitFor(() => expect(unpublishBodies).toEqual([{ slug: 'manual-revoke-slug' }]));
-    expect(await screen.findByRole('menuitem', { name: /Generate and copy link/i })).toBeTruthy();
+    await waitFor(() => expect(stopSwitch).toHaveAttribute('aria-checked', 'false'));
+    expect(stopSwitch).toBeEnabled();
+    expect(screen.getByText('The link is disabled.')).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: /Generate and copy link/i })).toBeNull();
     const confirmedStops = dispatch.mock.calls.map(([event]) => event)
       .filter((event) => event.type === 'od:project-share-history-changed')
       .map((event) => (event as CustomEvent).detail)
@@ -12444,6 +12447,181 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByTestId('annotation-style-summary')).toBeNull();
   });
 
+  describe('picking while the composer holds unsent work', () => {
+    const discardNotice = 'You have an unsent comment. Click again to discard it and switch.';
+    const savedComment: PreviewComment = {
+      id: 'comment-saved-pin',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      filePath: 'preview.html',
+      elementId: 'pin-saved',
+      selector: '[data-od-pin="pin-saved"]',
+      label: 'pin-saved',
+      text: '',
+      htmlHint: '',
+      position: { x: 40, y: 52, width: 18, height: 18 },
+      note: 'Saved note',
+      status: 'open',
+      createdAt: 10,
+      updatedAt: 10,
+    };
+
+    function renderViewer(previewComments: PreviewComment[] = []) {
+      render(
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile()}
+          liveHtml='<html><body><main data-od-id="hero">Hero</main><p data-od-id="lede">Lede</p></body></html>'
+          previewComments={previewComments}
+        />,
+      );
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+      return frame;
+    }
+
+    function postFromPreview(frame: HTMLIFrameElement, data: Record<string, unknown>) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, data }));
+      });
+    }
+
+    const heroTarget = {
+      elementId: 'hero',
+      selector: '[data-od-id="hero"]',
+      label: 'Hero heading',
+      text: 'Hero',
+      position: { x: 8, y: 12, width: 312, height: 63 },
+      htmlHint: '<main data-od-id="hero">Hero</main>',
+    };
+    const ledeTarget = {
+      elementId: 'lede',
+      selector: '[data-od-id="lede"]',
+      label: 'Lede paragraph',
+      text: 'Lede',
+      position: { x: 8, y: 120, width: 312, height: 40 },
+      htmlHint: '<p data-od-id="lede">Lede</p>',
+    };
+
+    function pickElement(frame: HTMLIFrameElement, target: typeof heroTarget) {
+      postFromPreview(frame, { type: 'od:comment-target', ...target });
+    }
+
+    async function draftOnHero(frame: HTMLIFrameElement, draft: string) {
+      pickElement(frame, heroTarget);
+      const input = await screen.findByTestId('comment-popover-input') as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: draft } });
+    }
+
+    function composerDraft() {
+      return (screen.getByTestId('comment-popover-input') as HTMLTextAreaElement).value;
+    }
+
+    function composerTitle() {
+      return screen.getByTestId('comment-popover').querySelector('.comment-popover-title')?.textContent;
+    }
+
+    function expectDraftKeptOnHero(draft: string) {
+      expect(composerDraft()).toBe(draft);
+      expect(composerTitle()).toBe('Hero heading');
+      expect(screen.getByText(discardNotice)).toBeTruthy();
+    }
+
+    it('keeps the draft and its target on the first element pick, and discards on the second', async () => {
+      const frame = renderViewer();
+      await draftOnHero(frame, 'Unsent thought');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+
+      pickElement(frame, ledeTarget);
+      expectDraftKeptOnHero('Unsent thought');
+
+      pickElement(frame, ledeTarget);
+      expect(composerTitle()).toBe('Lede paragraph');
+      expect(composerDraft()).toBe('');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+
+    it('retargets at once when the composer holds nothing unsent', async () => {
+      const frame = renderViewer();
+      pickElement(frame, heroTarget);
+      await screen.findByTestId('comment-popover-input');
+
+      pickElement(frame, ledeTarget);
+      expect(composerTitle()).toBe('Lede paragraph');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+
+    it('disarms the pending discard when the draft is edited', async () => {
+      const frame = renderViewer();
+      await draftOnHero(frame, 'Unsent thought');
+      pickElement(frame, ledeTarget);
+      expect(screen.getByText(discardNotice)).toBeTruthy();
+
+      fireEvent.change(screen.getByTestId('comment-popover-input'), {
+        target: { value: 'Unsent thought, continued' },
+      });
+      expect(screen.queryByText(discardNotice)).toBeNull();
+
+      pickElement(frame, ledeTarget);
+      expectDraftKeptOnHero('Unsent thought, continued');
+    });
+
+    it('guards a lasso selection the same way', async () => {
+      const frame = renderViewer();
+      postFromPreview(frame, { type: 'od:comment-targets', targets: [heroTarget, ledeTarget] });
+      await draftOnHero(frame, 'Unsent thought');
+      const lasso = {
+        type: 'od:pod-select',
+        points: [{ x: 4, y: 110 }, { x: 330, y: 110 }, { x: 330, y: 170 }, { x: 4, y: 170 }, { x: 4, y: 110 }],
+      };
+
+      postFromPreview(frame, lasso);
+      expectDraftKeptOnHero('Unsent thought');
+
+      postFromPreview(frame, lasso);
+      expect(composerTitle()).not.toBe('Hero heading');
+      expect(composerDraft()).toBe('');
+    });
+
+    it('guards opening a saved pin the same way', async () => {
+      const frame = renderViewer([savedComment]);
+      await draftOnHero(frame, 'Unsent thought');
+      const pin = screen.getByRole('button', { name: 'Open comment for pin-saved' });
+
+      fireEvent.click(pin);
+      expectDraftKeptOnHero('Unsent thought');
+
+      fireEvent.click(pin);
+      expect(composerDraft()).toBe('Saved note');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+
+    it('guards selecting a comment in the side panel the same way', async () => {
+      const frame = renderViewer([savedComment]);
+      await draftOnHero(frame, 'Unsent thought');
+      const card = screen.getByText('Saved note');
+
+      fireEvent.click(card);
+      expectDraftKeptOnHero('Unsent thought');
+
+      fireEvent.click(card);
+      expect(composerDraft()).toBe('Saved note');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+
+    it('lets an opened saved comment go without a notice while its note is unchanged', async () => {
+      const frame = renderViewer([savedComment]);
+      fireEvent.click(screen.getByRole('button', { name: 'Open comment for pin-saved' }));
+      expect((await screen.findByTestId('comment-popover-input') as HTMLTextAreaElement).value)
+        .toBe('Saved note');
+
+      pickElement(frame, heroTarget);
+      expect(composerTitle()).toBe('Hero heading');
+      expect(screen.queryByText(discardNotice)).toBeNull();
+    });
+  });
+
   it('keeps the comment panel closed after saving an annotation comment', async () => {
     function Harness() {
       const [comments, setComments] = useState<PreviewComment[]>([]);
@@ -13021,7 +13199,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.getByTestId('comment-saved-marker-pin-delete-rejected')).toBeTruthy();
   });
 
-  it('keeps a saved comment when send is rejected and removes it only after queue acceptance', async () => {
+  it('keeps a saved comment when send is rejected and still keeps it after queue acceptance', async () => {
     const comment: PreviewComment = {
       id: 'comment-send-result',
       projectId: 'project-1',
@@ -13070,11 +13248,12 @@ describe('FileViewer tweaks toolbar', () => {
     });
     fireEvent.click(screen.getByTestId('comment-add-send'));
     await waitFor(() => expect(onSendBoardCommentAttachments).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(onRemovePreviewComment).toHaveBeenCalledWith(comment.id));
     await waitFor(() => expect(screen.queryByTestId('comment-popover')).toBeNull());
+    expect(onRemovePreviewComment).not.toHaveBeenCalled();
+    expect(screen.getByTestId('comment-saved-marker-pin-send-result')).toBeTruthy();
   });
 
-  it('keeps a queued saved comment visible when no persistence removal callback exists', async () => {
+  it('closes the composer and keeps a queued saved comment when no removal callback exists', async () => {
     const comment: PreviewComment = {
       id: 'comment-send-without-removal',
       projectId: 'project-1',
@@ -13086,7 +13265,7 @@ describe('FileViewer tweaks toolbar', () => {
       text: '',
       htmlHint: '',
       position: { x: 40, y: 52, width: 18, height: 18 },
-      note: 'Keep until persistence can remove me',
+      note: 'Keep me after the hand-off',
       status: 'open',
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -13114,11 +13293,11 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.click(screen.getByTestId('comment-add-send'));
 
     await waitFor(() => expect(onSendBoardCommentAttachments).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId('comment-popover-input')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId('comment-popover')).toBeNull());
     expect(screen.getByTestId('comment-saved-marker-pin-send-without-removal')).toBeTruthy();
   });
 
-  it('removes only comments that were queued before a later selected send is rejected', async () => {
+  it('deselects only comments that were queued before a later selected send is rejected, deleting none', async () => {
     const comments: PreviewComment[] = [
       {
         id: 'comment-partial-first',
@@ -13188,10 +13367,75 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.click(screen.getByTestId('comment-side-send-claude'));
 
     await waitFor(() => expect(onSendBoardCommentAttachments).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(removed).toEqual([comments[0]!.id]));
-    expect(screen.queryByText('First queued comment')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId('comment-side-selectbar').textContent).toContain('1 selected');
+    });
+    expect(removed).toEqual([]);
+    expect(screen.getByText('First queued comment')).toBeTruthy();
     expect(screen.getByText('Second rejected comment')).toBeTruthy();
-    expect(screen.getByTestId('comment-side-selectbar').textContent).toContain('1 selected');
+  });
+
+  it('offers no second hand-off for a comment that is already applying', async () => {
+    const base = {
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      filePath: 'preview.html',
+      text: '',
+      htmlHint: '',
+      createdAt: 10,
+      updatedAt: 10,
+    };
+    const comments: PreviewComment[] = [
+      {
+        ...base,
+        id: 'comment-already-applying',
+        elementId: 'pin-already-applying',
+        selector: '[data-od-pin="pin-already-applying"]',
+        label: 'pin-already-applying',
+        position: { x: 20, y: 24, width: 18, height: 18 },
+        note: 'Already with the agent',
+        status: 'applying',
+      },
+      {
+        ...base,
+        id: 'comment-still-open',
+        elementId: 'pin-still-open',
+        selector: '[data-od-pin="pin-still-open"]',
+        label: 'pin-still-open',
+        position: { x: 48, y: 24, width: 18, height: 18 },
+        note: 'Not handed off yet',
+        status: 'open',
+      },
+    ];
+    const onSendBoardCommentAttachments = vi.fn().mockResolvedValue({
+      status: 'queued',
+      commentIds: ['comment-still-open'],
+    });
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+        previewComments={comments}
+        onSendBoardCommentAttachments={onSendBoardCommentAttachments}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    expect(screen.queryByText('Already with the agent')).toBeNull();
+    expect(screen.queryByTestId('comment-saved-marker-pin-already-applying')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open comment for pin-already-applying' })).toBeNull();
+    const selectButtons = screen.getAllByRole('button', { name: 'Select' });
+    expect(selectButtons).toHaveLength(1);
+    fireEvent.click(selectButtons[0]!);
+    fireEvent.click(screen.getByTestId('comment-side-send-claude'));
+
+    await waitFor(() => expect(onSendBoardCommentAttachments).toHaveBeenCalledTimes(1));
+    expect(onSendBoardCommentAttachments.mock.calls[0]![0]).toEqual([
+      expect.objectContaining({ id: 'comment-still-open' }),
+    ]);
   });
 
   it('keeps delivered external comments unhighlighted and sends them through the member send-to-chat path for a confirmed owner', async () => {

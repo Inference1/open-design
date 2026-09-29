@@ -816,6 +816,7 @@ export const ar: Dict = {
   'comment.authorRole.member': 'عضو',
   'comment.authorRole.sharePage': 'صفحة المشاركة',
   'comment.sharePageCommentReadOnly': 'لا يمكن تعديل تعليقات صفحة المشاركة.',
+  'comment.unsentDiscardNotice': 'لديك تعليق لم يُرسل بعد. انقر مرة أخرى لتجاهله والتبديل.',
   'comment.anchorState.reanchored': 'استنادًا إلى إصدار أقدم',
   'comment.anchorState.stale': 'قد يكون موضع الارتساء قد تغيّر',
   'comment.anchorState.lost': 'فُقد موضع الارتساء',

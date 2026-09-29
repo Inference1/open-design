@@ -5899,6 +5899,7 @@ export const zhCN: Dict = {
   'comment.authorRole.member': '成员',
   'comment.authorRole.sharePage': '分享页',
   'comment.sharePageCommentReadOnly': '分享页评论不可编辑。',
+  'comment.unsentDiscardNotice': '有未发送的评论。再次点击将丢弃并切换。',
   'comment.anchorState.reanchored': '基于旧版本',
   'comment.anchorState.stale': '锚点可能已移动',
   'comment.anchorState.lost': '锚点已丢失',

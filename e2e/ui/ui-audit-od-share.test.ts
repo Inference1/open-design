@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import type { Page } from '@playwright/test';
 const out = resolve(import.meta.dirname,'../../.tmp/ui-audit/final-design-review/current');
 const captureRun = new Date().toISOString().replace(/[:.]/g, '-');
+// The body the client parses from POST publish-public (`SharePublishResponse`).
+const published=(url:string,slug:string)=>({status:'published',receipt:{filePath:'index.html',slug,publishedAt:Date.now(),version:1,versionId:`${slug}-v1`,entryPath:'index.html'},url});
 test.use({ viewport:{width:1440,height:900},deviceScaleFactor:2,colorScheme:'light',locale:'zh-CN' });
 async function save(page:Page,id:string,observedState:string,detail:Record<string,unknown>={}){
   if (!new Set(['G1','G2','S1','S2','S3','S4','S4-C','S7','S9','S9-R','S10','S12','S15','C0','K2','K5','P1','S0','S1-T','S1-T2','S4-T','S14','S14-ERR']).has(id)) return;
@@ -70,7 +72,7 @@ test('capture isolated OD share entry, progress and failure states',async({page}
   await save(page,'S15','S15');
   await page.evaluate(()=>{Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:()=>Promise.resolve()}});});
   const url=`https://example.test/artifact/${projectId}/ui-audit-link`;
-  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='POST')return r.continue();await r.fulfill({json:{url,slug:'ui-audit-link',fileName:'index.html'}});});
+  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='POST')return r.continue();await r.fulfill({json:published(url,'ui-audit-link')});});
   const retry=menu.getByRole('menuitem').filter({hasText:/重试|Retry/}).first();
   await expect(retry).toBeVisible();
   await retry.click();
@@ -120,11 +122,18 @@ test('capture isolated OD share entry, progress and failure states',async({page}
   await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='DELETE')return r.continue();await r.fulfill({json:{slug:'ui-audit-link'}});});
   await menu.getByRole('switch',{name:/链接访问|Link access/}).click();
   await expect(menu.locator('.chrome-publish-url')).toHaveCount(0);
+  // A share stopped inside the panel reads as stopped at once, and the switch
+  // is the way back; the stopped state offers no publish button.
+  await expect(menu.getByRole('status').filter({hasText:/链接已停用|The link is disabled/})).toBeVisible();
+  const linkAccess=menu.getByRole('switch',{name:/链接访问|Link access/});
+  await expect(linkAccess).toHaveAttribute('aria-checked','false');
+  await expect(menu.getByRole('menuitem').filter({hasText:/生成并复制链接|Generate and copy/})).toHaveCount(0);
   await save(page,'S9','S9');
   let reopen!:()=>void;const reopening=new Promise<void>(res=>{reopen=res;});
   let markRequestStarted!:()=>void;const requestStarted=new Promise<void>(res=>{markRequestStarted=res;});
-  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='POST')return r.continue();markRequestStarted();await reopening;await r.fulfill({json:{url,slug:'ui-audit-link',fileName:'index.html'}});});
-  await menu.getByRole('menuitem').filter({hasText:/生成并复制链接|Generate and copy|重新开启|Resume/}).first().click();
+  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,async r=>{if(r.request().method()!=='POST')return r.continue();expect(r.request().postDataJSON()).toEqual({mode:'resume'});markRequestStarted();await reopening;await r.fulfill({json:published(url,'ui-audit-link')});});
+  await expect(linkAccess).toBeEnabled();
+  await linkAccess.click();
   try {await requestStarted;await save(page,'S9-R','S9-R');}finally{reopen();}
   await expect(menu.locator('.chrome-publish-url')).toHaveText(url);
   await page.goto(`/projects/${projectId}/files/index.html`);
@@ -525,7 +534,7 @@ test('capture isolated team share menu and access choices',async({page})=>{
   await save(page,'S1-T2','S1-T2',{mockWorkspaceType:team.workspaceType});
   await page.keyboard.press('Escape');
   const url=`https://example.test/artifact/${projectId}/team-link`;
-  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,r=>r.request().method()==='POST'?r.fulfill({json:{url,slug:'team-link',fileName:'index.html'}}):r.fallback());
+  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`,r=>r.request().method()==='POST'?r.fulfill({json:published(url,'team-link')}):r.fallback());
   await menu.getByRole('menuitem').filter({hasText:/链接|复制/}).first().click();
   await expect(menu.locator('.chrome-publish-url')).toHaveText(url);
   await save(page,'S4-T','S4-T',{mockWorkspaceType:team.workspaceType});

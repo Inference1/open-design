@@ -5453,6 +5453,7 @@ export const uk: Dict = {
   'comment.authorRole.member': 'Учасник',
   'comment.authorRole.sharePage': 'Спільна сторінка',
   'comment.sharePageCommentReadOnly': 'Коментарі зі сторінки спільного доступу не можна редагувати.',
+  'comment.unsentDiscardNotice': 'У вас є ненадісланий коментар. Натисніть ще раз, щоб відхилити його й перемкнутися.',
   'comment.anchorState.reanchored': 'на основі старішої версії',
   'comment.anchorState.stale': 'якір міг переміститися',
   'comment.anchorState.lost': 'якір втрачено',

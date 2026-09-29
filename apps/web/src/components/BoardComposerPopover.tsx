@@ -448,6 +448,7 @@ export function BoardComposerPopover({
   offset,
   docked = false,
   commenting = true,
+  discardPending = false,
 }: {
   target: PreviewCommentSnapshot;
   existing: PreviewComment | null;
@@ -499,6 +500,8 @@ export function BoardComposerPopover({
   offset?: PopoverOffset;
   docked?: boolean;
   commenting?: boolean;
+  /** A pick was held back to protect unsent work; the next pick discards it. */
+  discardPending?: boolean;
 }) {
   const pendingCount = notes.length + (draft.trim() ? 1 : 0);
   const podMembers = target.podMembers ?? [];
@@ -824,6 +827,11 @@ export function BoardComposerPopover({
                 this on the owner-reads-external-comment case. */}
             {!canEditComment && existing?.authorKind === 'user' ? (
               <p className="comment-popover-readonly-note">{t('comment.sharePageCommentReadOnly')}</p>
+            ) : null}
+            {discardPending ? (
+              <p className="comment-popover-readonly-note" role="status">
+                {t('comment.unsentDiscardNotice')}
+              </p>
             ) : null}
           </section>
         ) : null}

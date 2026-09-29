@@ -42,6 +42,7 @@ import {
   type CollabMemberRole,
   type AgentInfo,
   type ProjectFileVersion,
+  type ProjectFilePublicShareResponse,
   type SocialShareRequest,
   type SocialShareResponse,
   type EntryIndexConflictDetails,
@@ -172,6 +173,7 @@ import {
   type WebDeploymentInfo,
   type WebDeployProjectFileResponse,
   type WebDeployProviderId,
+  type WebPublicFileShareLink,
   type WebUpdateDeployConfigRequest,
   type ProjectPreviewBaseScope,
   writeProjectTextFile,
@@ -270,6 +272,7 @@ import {
   canSendCommentToAgent as canSendCommentToAgentPure,
   type CommentAuthorityContext,
 } from '../comments/comment-authority';
+import { composerHasUnsentWork } from '../comments/composer-unsent-work';
 import { RemixIcon } from './RemixIcon';
 import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
 import { HandoffButton } from './HandoffButton';
@@ -7882,6 +7885,33 @@ function HtmlViewer({
     invalidatePublicFileCopy();
   }, []);
 
+  // The one way a share-state read lands in this viewer's share state.
+  function applyPublicShareStateRead(state: ProjectFilePublicShareResponse) {
+    setFileShareStatus(state.status ?? null);
+    setFileShareFreshness(state.freshness ?? 'unknown');
+    const knownLink = publicFileShareLinkFromRead(state);
+    // Missing local metadata is not proof a live remote link was stopped.
+    if (state.status === 'stopped') {
+      onObservedPublicShareLink?.(null);
+      // A confirmed remote stop outranks a previously known local URL.
+      // An unavailable read is not a confirmed stop and keeps the link.
+      setPublishedFileUrl('');
+      setPublishedFileSlug('');
+    } else if (knownLink) {
+      // A live publication without a Viewer address keeps its slug so the
+      // owner can still stop it; only a real URL is observable as a link.
+      setPublishedFileUrl(knownLink.url ?? '');
+      setPublishedFileSlug(knownLink.slug);
+      if (state.status === 'active' && workspaceContext && sourceAuthorizationScopeKey
+        && state.publication?.url && state.publication.slug) {
+        onObservedPublicShareLink?.({ status: 'active', projectId, filePath: file.name,
+          slug: state.publication.slug, url: state.publication.url,
+          workspaceId: workspaceContext.workspaceId, workspaceMemberId: workspaceContext.workspaceMemberId,
+          authorizationScopeKey: sourceAuthorizationScopeKey, freshness: state.freshness ?? 'unknown' });
+      }
+    }
+  }
+
   useEffect(() => {
     clearPublicFileProgressTimers();
     setPublishProgress(null);
@@ -7919,29 +7949,7 @@ function HtmlViewer({
         const current = publicFileIdentityRef.current;
         if (cancelled || publicFileRequestSeqRef.current !== requestSeq
           || current.projectId !== projectId || current.fileName !== file.name) return;
-        setFileShareStatus(state.status ?? null);
-        setFileShareFreshness(state.freshness ?? 'unknown');
-        const knownLink = publicFileShareLinkFromRead(state);
-        // Missing local metadata is not proof a live remote link was stopped.
-        if (state.status === 'stopped') {
-          onObservedPublicShareLink?.(null);
-          // A confirmed remote stop outranks a previously known local URL.
-          // An unavailable read is not a confirmed stop and keeps the link.
-          setPublishedFileUrl('');
-          setPublishedFileSlug('');
-        } else if (knownLink) {
-          // A live publication without a Viewer address keeps its slug so the
-          // owner can still stop it; only a real URL is observable as a link.
-          setPublishedFileUrl(knownLink.url ?? '');
-          setPublishedFileSlug(knownLink.slug);
-          if (state.status === 'active' && workspaceContext && sourceAuthorizationScopeKey
-            && state.publication?.url && state.publication.slug) {
-            onObservedPublicShareLink?.({ status: 'active', projectId, filePath: file.name,
-              slug: state.publication.slug, url: state.publication.url,
-              workspaceId: workspaceContext.workspaceId, workspaceMemberId: workspaceContext.workspaceMemberId,
-              authorizationScopeKey: sourceAuthorizationScopeKey, freshness: state.freshness ?? 'unknown' });
-          }
-        }
+        applyPublicShareStateRead(state);
       })
       .catch(() => {
         if (!cancelled && publicFileRequestSeqRef.current === requestSeq) setFileShareFreshness('unknown');
@@ -7964,28 +7972,7 @@ function HtmlViewer({
         const current = publicFileIdentityRef.current;
         if (requestSeq !== publicFileRequestSeqRef.current
           || current.projectId !== projectId || current.fileName !== file.name) return;
-        setFileShareStatus(state.status ?? null);
-        setFileShareFreshness(state.freshness ?? 'unknown');
-        const knownLink = publicFileShareLinkFromRead(state);
-        if (state.status === 'stopped') {
-          onObservedPublicShareLink?.(null);
-          // A confirmed remote stop outranks a previously known local URL.
-          // An unavailable read is not a confirmed stop and keeps the link.
-          setPublishedFileUrl('');
-          setPublishedFileSlug('');
-        } else if (knownLink) {
-          // A live publication without a Viewer address keeps its slug so the
-          // owner can still stop it; only a real URL is observable as a link.
-          setPublishedFileUrl(knownLink.url ?? '');
-          setPublishedFileSlug(knownLink.slug);
-          if (state.status === 'active' && workspaceContext && sourceAuthorizationScopeKey
-            && state.publication?.url && state.publication.slug) {
-            onObservedPublicShareLink?.({ status: 'active', projectId, filePath: file.name,
-              slug: state.publication.slug, url: state.publication.url,
-              workspaceId: workspaceContext.workspaceId, workspaceMemberId: workspaceContext.workspaceMemberId,
-              authorizationScopeKey: sourceAuthorizationScopeKey, freshness: state.freshness ?? 'unknown' });
-          }
-        }
+        applyPublicShareStateRead(state);
       })
       .catch(() => {
         if (requestSeq === publicFileRequestSeqRef.current) setFileShareFreshness('unknown');
@@ -8042,6 +8029,42 @@ function HtmlViewer({
     }, requestId ? { requestId } : undefined);
   };
 
+  /**
+   * A successful stop or publish/resume IS the share's status from that moment;
+   * the panel never waits for its next open to learn it. A publish that answered
+   * without a link re-reads the state once, and a read that fails or has no link
+   * either leaves the publication standing as "link unavailable".
+   *
+   * The panel reports "link unavailable" only after that re-read has settled
+   * without a link. Until then the mutation is still in progress: nothing is
+   * written, and the caller stays busy on the returned promise.
+   */
+  async function settlePublicShareAfterMutation(
+    outcome: { status: 'stopped' } | { status: 'active'; link: WebPublicFileShareLink },
+    requestSeq: number,
+  ): Promise<void> {
+    if (outcome.status === 'stopped') {
+      setFileShareStatus('stopped');
+      setFileShareFreshness('unknown');
+      setPublishedFileUrl('');
+      setPublishedFileSlug('');
+      onObservedPublicShareLink?.(null);
+      return;
+    }
+    let reRead: ProjectFilePublicShareResponse | null = null;
+    if (!outcome.link.url) {
+      reRead = await fetchProjectFilePublicShareState(projectId, file.name, workspaceContext)
+        .catch(() => null);
+      const current = publicFileIdentityRef.current;
+      if (publicFileRequestSeqRef.current !== requestSeq
+        || current.projectId !== projectId || current.fileName !== file.name) return;
+    }
+    setFileShareStatus('active');
+    setPublishedFileUrl(outcome.link.url ?? '');
+    setPublishedFileSlug(outcome.link.slug);
+    if (reRead) applyPublicShareStateRead(reRead);
+  }
+
   async function publishCurrentFilePublic(mode?: 'resume') {
     if (streaming || viewerOnly || publishingPublicFile) return;
     const requestProjectId = projectId;
@@ -8084,8 +8107,14 @@ function HtmlViewer({
       ) {
         return;
       }
-      setPublishedFileUrl(response.url ?? '');
-      setPublishedFileSlug(response.slug);
+      await settlePublicShareAfterMutation({ status: 'active', link: response }, requestSeq);
+      if (
+        publicFileRequestSeqRef.current !== requestSeq ||
+        publicFileIdentityRef.current.projectId !== requestProjectId ||
+        publicFileIdentityRef.current.fileName !== requestFileName
+      ) {
+        return;
+      }
       if (response.madeTeamVisible) setShareAccess('workspace');
       clearPublicFileProgressTimers();
       setPublishProgress(boundedPublishProgress(0, true));
@@ -8300,9 +8329,7 @@ function HtmlViewer({
       ) {
         return;
       }
-      setPublishedFileUrl('');
-      setPublishedFileSlug('');
-      onObservedPublicShareLink?.(null);
+      void settlePublicShareAfterMutation({ status: 'stopped' }, requestSeq);
       confirmedStop = { sourceFilePath: requestFileName, accountScope: requestAccountScope, generation: requestAccountGeneration };
     } catch (error) {
       console.warn('[FileViewer] failed to unpublish public file', error);
@@ -9303,6 +9330,37 @@ function HtmlViewer({
       next.forEach((item) => URL.revokeObjectURL(item.url));
     };
   }, [boardImages]);
+  // Read through refs inside the preview message listener, so a keystroke in
+  // the draft does not re-subscribe it.
+  const composerHoldsUnsentWork = Boolean(activeCommentTarget) && composerHasUnsentWork({
+    draft: commentDraft,
+    queuedNoteCount: queuedBoardNotes.length,
+    freshImageCount: boardImages.length,
+    savedNote: currentActiveComposerComment()?.note ?? null,
+  });
+  const composerHoldsUnsentWorkRef = useRef(composerHoldsUnsentWork);
+  composerHoldsUnsentWorkRef.current = composerHoldsUnsentWork;
+  const composerDiscardArmedRef = useRef(false);
+  const [composerDiscardPending, setComposerDiscardPending] = useState(false);
+  const disarmComposerDiscard = useCallback(() => {
+    composerDiscardArmedRef.current = false;
+    setComposerDiscardPending(false);
+  }, []);
+  /**
+   * Invariant: a pick never silently throws away unsent composer work. While
+   * the composer holds any, the first pick changes nothing and only arms the
+   * discard, which shows the notice; the next pick confirms it and retargets.
+   * Editing the draft disarms. Every pick path retargets through here.
+   */
+  const requestComposerRetarget = useCallback((applyRetarget: () => void) => {
+    if (composerHoldsUnsentWorkRef.current && !composerDiscardArmedRef.current) {
+      composerDiscardArmedRef.current = true;
+      setComposerDiscardPending(true);
+      return;
+    }
+    disarmComposerDiscard();
+    applyRetarget();
+  }, [disarmComposerDiscard]);
   const [commentSavedToast, setCommentSavedToast] = useState<string | null>(null);
   const [templateSavedToast, setTemplateSavedToast] = useState<string | null>(null);
   const [deploySavedToast, setDeploySavedToast] = useState<{ message: string; details: string } | null>(null);
@@ -12660,19 +12718,23 @@ function HtmlViewer({
         if (!snapshot.elementId || !isValidCommentOverlayPosition(snapshot.position)) return;
         const shouldOpenComposer = boardMode || commentCreateMode;
         cancelHoverCardDismiss();
-        setActiveCommentTarget((current) => (shouldOpenComposer ? snapshot : current));
-        setHoveredCommentTarget(snapshot);
         setLiveCommentTargets((current) => {
           const existing = current.get(snapshot.elementId);
           if (existing && commentSnapshotEqual(existing, snapshot)) return current;
           return new Map(current).set(snapshot.elementId, snapshot);
         });
-        if (shouldOpenComposer) {
+        if (!shouldOpenComposer) {
+          setHoveredCommentTarget(snapshot);
+          return;
+        }
+        requestComposerRetarget(() => {
+          setActiveCommentTarget(snapshot);
+          setHoveredCommentTarget(snapshot);
           setActivePreviewCommentId(null);
           setCommentDraft('');
           setQueuedBoardNotes([]);
           setActiveCommentExistingAttachments([]);
-        }
+        });
         return;
       }
       if (data.type === 'od:pod-clear') {
@@ -12703,18 +12765,20 @@ function HtmlViewer({
           setStrokePoints([]);
           return;
         }
-        setActiveCommentTarget(nextTarget);
-        setHoveredCommentTarget(nextTarget);
-        setActivePreviewCommentId(null);
-        setQueuedBoardNotes([]);
-        setCommentDraft('');
-        setActiveCommentExistingAttachments([]);
+        requestComposerRetarget(() => {
+          setActiveCommentTarget(nextTarget);
+          setHoveredCommentTarget(nextTarget);
+          setActivePreviewCommentId(null);
+          setQueuedBoardNotes([]);
+          setCommentDraft('');
+          setActiveCommentExistingAttachments([]);
+        });
         setStrokePoints([]);
       }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, scheduleHoverCardDismiss, workspaceActive]);
+  }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, requestComposerRetarget, scheduleHoverCardDismiss, workspaceActive]);
 
   useEffect(() => {
     if (!workspaceActive || !boardMode || !activeCommentTarget || activeCommentTarget.selectionKind === 'pod') return;
@@ -14862,6 +14926,7 @@ function HtmlViewer({
   }
 
   function clearBoardComposer() {
+    disarmComposerDiscard();
     setActiveCommentTarget(null);
     setHoveredCommentTarget(null);
     setHoveredPodMemberId(null);
@@ -15096,9 +15161,6 @@ function HtmlViewer({
           commentsToAttachments([existingComment]),
         );
         if (!commentSendCompleted(result, existingComment.id)) return;
-        if (!onRemovePreviewComment) return;
-        const removed = await onRemovePreviewComment(existingComment.id);
-        if (!removed) return;
         clearBoardComposer();
       } finally {
         setSendingBoardBatch(false);
@@ -16419,7 +16481,11 @@ function HtmlViewer({
       canSendToAgent={canSendActiveComment}
       draft={commentDraft}
       notes={queuedBoardNotes}
-      onDraft={setCommentDraft}
+      discardPending={composerDiscardPending && composerHoldsUnsentWork}
+      onDraft={(value) => {
+        disarmComposerDiscard();
+        setCommentDraft(value);
+      }}
       onAddDraft={queueCurrentDraft}
       onRemoveQueuedNote={(index) =>
         setQueuedBoardNotes((current) => current.filter((_, currentIndex) => currentIndex !== index))
@@ -16577,16 +16643,18 @@ function HtmlViewer({
           podMembers: comment.podMembers,
           ...(typeof comment.slideIndex === 'number' ? { slideIndex: comment.slideIndex } : {}),
         };
-        setActiveCommentTarget(snapshot);
-        setHoveredCommentTarget(snapshot);
-        setActivePreviewCommentId(comment.id);
-        setCommentDraft(comment.note);
-        setQueuedBoardNotes([]);
-        setActiveCommentExistingAttachments(comment.attachments ?? []);
-        setBoardMode(true);
-        setCommentCreateMode(true);
-        setCommentPanelOpen(true);
-        setCommentSidePanelCollapsed(false);
+        requestComposerRetarget(() => {
+          setActiveCommentTarget(snapshot);
+          setHoveredCommentTarget(snapshot);
+          setActivePreviewCommentId(comment.id);
+          setCommentDraft(comment.note);
+          setQueuedBoardNotes([]);
+          setActiveCommentExistingAttachments(comment.attachments ?? []);
+          setBoardMode(true);
+          setCommentCreateMode(true);
+          setCommentPanelOpen(true);
+          setCommentSidePanelCollapsed(false);
+        });
       }}
       onSendSelected={async () => {
         if (!onSendBoardCommentAttachments) return;
@@ -16604,26 +16672,14 @@ function HtmlViewer({
             commentsToAttachments(selected),
           );
           const completedIds = new Set(result.commentIds);
-          if (completedIds.size === 0 || !onRemovePreviewComment) return;
-          const removedIds = new Set<string>();
-          const removals = await Promise.all(
-            selected
-              .filter((comment) => completedIds.has(comment.id))
-              .map(async (comment) => ({
-                id: comment.id,
-                removed: await onRemovePreviewComment(comment.id),
-              })),
-          );
-          for (const removal of removals) {
-            if (removal.removed) removedIds.add(removal.id);
-          }
+          if (completedIds.size === 0) return;
           setSelectedSideCommentIds((current) => {
             const next = new Set(current);
-            for (const id of removedIds) next.delete(id);
+            for (const id of completedIds) next.delete(id);
             return next;
           });
           setActivePreviewCommentId((current) => (
-            current && removedIds.has(current) ? null : current
+            current && completedIds.has(current) ? null : current
           ));
         } finally {
           setSendingBoardBatch(false);
@@ -17817,16 +17873,18 @@ function HtmlViewer({
                   strokePoints={strokePoints}
                   activeSlideIndex={effectiveDeck ? slideState?.active ?? null : null}
                   onOpenComment={(comment, snapshot) => {
-                    setCommentPanelOpen(true);
-                    setCommentSidePanelCollapsed(false);
-                    setCommentCreateMode(true);
-                    setBoardMode(true);
-                    setActiveCommentTarget(snapshot);
-                    setHoveredCommentTarget(snapshot);
-                    setActivePreviewCommentId(comment.id);
-                    setCommentDraft(comment.note);
-                    setQueuedBoardNotes([]);
-                    setActiveCommentExistingAttachments(comment.attachments ?? []);
+                    requestComposerRetarget(() => {
+                      setCommentPanelOpen(true);
+                      setCommentSidePanelCollapsed(false);
+                      setCommentCreateMode(true);
+                      setBoardMode(true);
+                      setActiveCommentTarget(snapshot);
+                      setHoveredCommentTarget(snapshot);
+                      setActivePreviewCommentId(comment.id);
+                      setCommentDraft(comment.note);
+                      setQueuedBoardNotes([]);
+                      setActiveCommentExistingAttachments(comment.attachments ?? []);
+                    });
                   }}
                 />
               ) : null}

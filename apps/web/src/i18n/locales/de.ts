@@ -816,6 +816,7 @@ export const de: Dict = {
   'comment.authorRole.member': 'Mitglied',
   'comment.authorRole.sharePage': 'Freigabeseite',
   'comment.sharePageCommentReadOnly': 'Kommentare von der Freigabeseite können nicht bearbeitet werden.',
+  'comment.unsentDiscardNotice': 'Du hast einen nicht gesendeten Kommentar. Klicke erneut, um ihn zu verwerfen und zu wechseln.',
   'comment.anchorState.reanchored': 'basierend auf einer älteren Version',
   'comment.anchorState.stale': 'Anker könnte verschoben worden sein',
   'comment.anchorState.lost': 'Anker verloren',

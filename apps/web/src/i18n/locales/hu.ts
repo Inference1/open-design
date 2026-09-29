@@ -5453,6 +5453,7 @@ export const hu: Dict = {
   'comment.authorRole.member': 'Tag',
   'comment.authorRole.sharePage': 'Megosztási oldal',
   'comment.sharePageCommentReadOnly': 'A megosztási oldal megjegyzései nem szerkeszthetők.',
+  'comment.unsentDiscardNotice': 'Van egy el nem küldött megjegyzésed. Kattints újra az elvetéséhez és a váltáshoz.',
   'comment.anchorState.reanchored': 'egy korábbi verzió alapján',
   'comment.anchorState.stale': 'a horgony elmozdulhatott',
   'comment.anchorState.lost': 'a horgony elveszett',

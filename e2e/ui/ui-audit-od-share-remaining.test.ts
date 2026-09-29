@@ -103,7 +103,7 @@ test('capture remaining OD share audit states from visible product UI', async ({
   await page.route(publishPath, async route => {
     if (route.request().method() !== 'POST') return route.fallback();
     await gate;
-    await route.fulfill({ json: { url: oldUrl, slug: 'prior-link', fileName: 'index.html' } });
+    await route.fulfill({ json: { status: 'published', receipt: { filePath: 'index.html', slug: 'prior-link', publishedAt: Date.now(), version: 1, versionId: 'ui-audit-v1', entryPath: 'index.html' }, url: oldUrl } });
   });
   const request = page.waitForRequest(req => req.method() === 'POST' && req.url().includes('/publish-public'));
   await update.click();

@@ -351,7 +351,9 @@ describe('G4 · retired HTML publishing section label', () => {
     fireEvent.click(copy);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(url));
     fireEvent.click(stop);
-    await screen.findByRole('menuitem', { name: /Generate and copy link/i });
+    // A stopped share reopens through the switch; it is never re-published.
+    expect(await screen.findByText('The link is disabled.')).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: /Generate and copy link/i })).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/projects/project-1/files/index.html/publish-public',
       expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ slug: 'stable-slug' }) }),
@@ -385,7 +387,9 @@ describe('Viewer link unavailable (no Viewer origin configured)', () => {
     expect(publishCalls(fetchMock)).toEqual([]);
     // The owner can still stop it by its stable alias.
     fireEvent.click(stop);
-    await screen.findByRole('menuitem', { name: /Generate and copy link/i });
+    // A stopped share reopens through the switch; it is never re-published.
+    expect(await screen.findByText('The link is disabled.')).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: /Generate and copy link/i })).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/projects/project-1/files/index.html/publish-public',
       expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ slug: 'stable-slug' }) }),
@@ -446,9 +450,12 @@ it('K3 re-reads remote stop/resume on the still-mounted Owner comment rail, but 
   fireEvent.click(toolbarAction('Share'));
   fireEvent.click(await screen.findByRole('switch', { name: /link access/i }));
   await waitFor(() => expect(syncReads).toContain(true));
-  expect(await screen.findByText('The link is disabled.')).toBeVisible();
+  // The comment rail and the Share panel each announce the stop.
+  await waitFor(() => expect(screen.getAllByText('The link is disabled.')).toHaveLength(2));
   expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
-  fireEvent.click(await screen.findByRole('menuitem', { name: /Generate and copy link/i }));
+  const reopen = screen.getByRole('switch', { name: /link access/i });
+  await waitFor(() => expect(reopen).toBeEnabled());
+  fireEvent.click(reopen);
   await waitFor(() => expect(syncReads.at(-1)).toBe(false));
   await waitFor(() => expect(screen.queryByText('The link is disabled.')).toBeNull());
   failStop = true;

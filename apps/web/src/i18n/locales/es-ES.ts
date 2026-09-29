@@ -816,6 +816,7 @@ export const esES: Dict = {
   'comment.authorRole.member': 'Miembro',
   'comment.authorRole.sharePage': 'Página compartida',
   'comment.sharePageCommentReadOnly': 'Los comentarios de la página de recurso compartido no se pueden editar.',
+  'comment.unsentDiscardNotice': 'Tienes un comentario sin enviar. Haz clic de nuevo para descartarlo y cambiar.',
   'comment.anchorState.reanchored': 'basado en una versión anterior',
   'comment.anchorState.stale': 'el ancla puede haberse movido',
   'comment.anchorState.lost': 'ancla perdida',

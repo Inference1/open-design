@@ -5453,6 +5453,7 @@ export const id: Dict = {
   'comment.authorRole.member': 'Anggota',
   'comment.authorRole.sharePage': 'Halaman berbagi',
   'comment.sharePageCommentReadOnly': 'Komentar dari halaman berbagi tidak dapat diedit.',
+  'comment.unsentDiscardNotice': 'Ada komentar yang belum dikirim. Klik lagi untuk membuangnya dan beralih.',
   'comment.anchorState.reanchored': 'berdasarkan versi lama',
   'comment.anchorState.stale': 'jangkar mungkin telah berpindah',
   'comment.anchorState.lost': 'jangkar hilang',

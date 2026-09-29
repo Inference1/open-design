@@ -5453,6 +5453,7 @@ export const ja: Dict = {
   'comment.authorRole.member': 'メンバー',
   'comment.authorRole.sharePage': '共有ページ',
   'comment.sharePageCommentReadOnly': '共有ページのコメントは編集できません。',
+  'comment.unsentDiscardNotice': '未送信のコメントがあります。もう一度クリックすると破棄して切り替えます。',
   'comment.anchorState.reanchored': '古いバージョンに基づく',
   'comment.anchorState.stale': 'アンカーが移動した可能性があります',
   'comment.anchorState.lost': 'アンカーが失われました',
