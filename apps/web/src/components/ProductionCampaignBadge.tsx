@@ -17,7 +17,7 @@ import {
 } from "./touchpoint-static-actions";
 import { dispatchProductionCampaignAction } from "./ProductionCampaignModal";
 import { emitProductionTouchpointLoadDiagnostic, loadProductionTouchpointDecision, productionTouchpointRecovery } from "./production-touchpoint-loader";
-import { resolveAuthorizationDeadline, touchpointContentIdentity, touchpointLeaseValue, type TouchpointLeaseValue, type TouchpointLifecycleLoad, useTouchpointLifecycle } from "./touchpoint-lifecycle";
+import { resolveAuthorizationDeadline, touchpointContentIdentity, touchpointScheduleWindowMs, touchpointLeaseValue, type TouchpointLeaseValue, type TouchpointLifecycleLoad, useTouchpointLifecycle } from "./touchpoint-lifecycle";
 import {
 	TestTouchpointMount,
 	recordVisibleTestTouchpoint,
@@ -83,7 +83,7 @@ export function ProductionCampaignBadge({
 			emitWebTouchpointDiagnostic({ code: "touchpoint_capability_unsupported", detail: next.requiredCapabilities?.join(",") });
 			return { kind: "clear" };
 		}
-		return { kind: "decision", value: { ...touchpointLeaseValue(next), sessionSubject }, key: touchpointContentIdentity(next), validForMs: deadline - Date.parse(next.serverTime), offlineRecovery: productionTouchpointRecovery(loaded.offlineReplay) ?? undefined };
+		return { kind: "decision", value: { ...touchpointLeaseValue(next), sessionSubject }, key: touchpointContentIdentity(next), validForMs: deadline - Date.parse(next.serverTime), offlineValidForMs: touchpointScheduleWindowMs(next), offlineRecovery: productionTouchpointRecovery(loaded.offlineReplay) ?? undefined };
 	}, [locale, sessionSubject]);
 	const onError = useCallback((error: unknown) => {
 		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
@@ -113,6 +113,12 @@ export function ProductionCampaignBadge({
 			authenticated &&
 			decision.sessionSubject === sessionSubject &&
 			lifecycle.isCurrent(mountGeneration);
+		// OPEND-3378: a mount abandoned only because the lease was momentarily
+		// not current must be restarted by the next same-key grant.
+		const abandonFencedMount = () => {
+			if (!cancelled) lifecycle.reportFencedMount(mountGeneration);
+			dispose();
+		};
 		let verified: Awaited<ReturnType<typeof verifyWebTouchpoint>> | undefined;
 		const element = document.createElement(
 			"opend-touchpoint",
@@ -139,7 +145,7 @@ export function ProductionCampaignBadge({
 				verified = await verifyWebTouchpoint(decision.content);
 				if (elementDisposed) disposeVerified();
 				if (!current()) {
-					dispose();
+					abandonFencedMount();
 					return;
 				}
 				const manifestPlacement = decision.content.manifest.placements.find(
@@ -168,7 +174,8 @@ export function ProductionCampaignBadge({
 					),
 				);
 				if (!current() || !context) {
-					dispose();
+					if (!current()) abandonFencedMount();
+					else dispose();
 					if (current() && !context)
 						emitWebTouchpointDiagnostic({
 							code: "touchpoint_locale_unsupported",
@@ -194,7 +201,7 @@ export function ProductionCampaignBadge({
 						onDiagnostic: emitWebTouchpointDiagnostic,
 					},
 				);
-				if (!current()) dispose();
+				if (!current()) abandonFencedMount();
 			} catch (error) {
 				if (current()) {
 					emitWebTouchpointDiagnostic({
@@ -211,7 +218,7 @@ export function ProductionCampaignBadge({
 			dispose();
 			container.replaceChildren();
 		};
-	}, [authenticated, decision, sessionSubject, clear, lifecycle.generation, lifecycle.isCurrent]);
+	}, [authenticated, decision, sessionSubject, clear, lifecycle.generation, lifecycle.isCurrent, lifecycle.reportFencedMount]);
 
 	const onTestVisible = useCallback(
 		(next: TestDecision, placementKey: TestCampaignPlacement) => {

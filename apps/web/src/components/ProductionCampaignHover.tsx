@@ -27,6 +27,7 @@ import {
 	resolveAuthorizationDeadline,
 	touchpointContentIdentity,
 	touchpointLeaseValue,
+	touchpointScheduleWindowMs,
 	type TouchpointLeaseValue,
 	type TouchpointLifecycleLoad,
 	useTouchpointLifecycle,
@@ -62,7 +63,7 @@ type ActiveHover = Readonly<{
 function validDecision(
 	value: unknown,
 	placementKey: string,
-): { valid: ValidDecision; validForMs: number } | null {
+): { valid: ValidDecision; validForMs: number; offlineValidForMs: number } | null {
 	if (!value || typeof value !== "object") return null;
 	const decision = value as RuntimeDecision;
 	const deadline = resolveAuthorizationDeadline(decision);
@@ -98,6 +99,7 @@ function validDecision(
 			actionIds: new Set(placement.staticActions.map((action) => action.id)),
 		},
 		validForMs: deadline - Date.parse(decision.serverTime),
+		offlineValidForMs: touchpointScheduleWindowMs(decision),
 	};
 }
 
@@ -209,6 +211,8 @@ export function ProductionCampaignHover({
 				// the pair still rebuilds.
 				key: `${touchpointContentIdentity(entry.valid.decision)}:${layer.valid.decision.content.id}`,
 				validForMs: Math.min(entry.validForMs, layer.validForMs),
+				// The pair is only as scheduled as its shorter half.
+				offlineValidForMs: Math.min(entry.offlineValidForMs, layer.offlineValidForMs),
 				// Both halves, not either — see `productionTouchpointPairRecovery`,
 				// which also owns how the two recovery policies combine.
 				offlineRecovery:

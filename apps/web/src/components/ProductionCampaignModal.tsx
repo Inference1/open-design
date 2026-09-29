@@ -27,6 +27,7 @@ import {
 	resolveAuthorizationDeadline,
 	touchpointContentIdentity,
 	touchpointLeaseValue,
+	touchpointScheduleWindowMs,
 	touchpointWithdrawsDisplay,
 	useTouchpointLifecycle,
 	type TouchpointLeaseValue,
@@ -334,7 +335,7 @@ export function ProductionCampaignModal({
 			// suppressed offer has to clear instead.
 			if (!continuesOpenPresentation && wasDisplayed(sessionSubject, next.activityId))
 				return openPresentation.current ? { kind: "retain" } : { kind: "clear" };
-			return { kind: "decision", value: { ...touchpointLeaseValue(next), sessionSubject }, key: touchpointContentIdentity(next), validForMs: deadline - serverTime, offlineRecovery: productionTouchpointRecovery(loaded.offlineReplay) ?? undefined };
+			return { kind: "decision", value: { ...touchpointLeaseValue(next), sessionSubject }, key: touchpointContentIdentity(next), validForMs: deadline - serverTime, offlineValidForMs: touchpointScheduleWindowMs(next), offlineRecovery: productionTouchpointRecovery(loaded.offlineReplay) ?? undefined };
 		},
 		[clearOpenPresentation, locale, sessionSubject],
 	);
@@ -349,7 +350,7 @@ export function ProductionCampaignModal({
 		if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
 	}, [clearOpenPresentation]);
 	const lifecycle = useTouchpointLifecycle<AuthorizedDecision>({ enabled: productionEnabled, identity: productionEnabled ? JSON.stringify([sessionSubject, locale]) : null, load, onError, offlineFallback: true });
-	const { current: decision, generation, clear, isCurrent } = lifecycle;
+	const { current: decision, generation, clear, isCurrent, reportFencedMount } = lifecycle;
 	const closeProductionModal = useCallback(() => {
 		clearOpenPresentation();
 		setClosed(true);
@@ -394,6 +395,12 @@ export function ProductionCampaignModal({
 		let cancelled = false;
 		const mountGeneration = generation;
 		const current = () => !cancelled && isCurrent(mountGeneration);
+		// OPEND-3378: a mount abandoned only because the lease was momentarily
+		// not current must be restarted by the next same-key grant.
+		const abandonFencedMount = () => {
+			if (!cancelled) reportFencedMount(mountGeneration);
+			dispose();
+		};
 		let verified: Awaited<ReturnType<typeof verifyWebTouchpoint>> | undefined;
 		const element = document.createElement(
 			"opend-touchpoint",
@@ -441,7 +448,7 @@ export function ProductionCampaignModal({
 				verified = await verifyWebTouchpoint(decision.content);
 				if (elementDisposed) disposeVerified();
 				if (!current()) {
-					dispose();
+					abandonFencedMount();
 					return;
 				}
 				const manifestPlacement = decision.content.manifest.placements.find(
@@ -470,7 +477,8 @@ export function ProductionCampaignModal({
 					),
 				);
 				if (!current() || !context) {
-					dispose();
+					if (!current()) abandonFencedMount();
+					else dispose();
 					if (current() && !context)
 						emitWebTouchpointDiagnostic({
 							code: "touchpoint_locale_unsupported",
@@ -498,7 +506,7 @@ export function ProductionCampaignModal({
 					},
 				);
 				if (!current()) {
-					dispose();
+					abandonFencedMount();
 					return;
 				}
 				mounted = true;
@@ -530,7 +538,7 @@ export function ProductionCampaignModal({
 			dispose();
 			container.replaceChildren();
 		};
-	}, [authenticated, closeProductionModal, decision, generation, isCurrent, sessionSubject]);
+	}, [authenticated, closeProductionModal, decision, generation, isCurrent, reportFencedMount, sessionSubject]);
 	useEffect(() => {
 		if (!decision) return;
 		restoreFocus.current =

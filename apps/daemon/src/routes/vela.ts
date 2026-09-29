@@ -495,6 +495,23 @@ function decodeProxyBody(
   return null;
 }
 
+/**
+ * The whole budget a production decision gets from the runtime before the
+ * daemon answers from its own store instead (OPEND-3436 AC2).
+ *
+ * It has to run out BEFORE the browser gives up on the same request, which the
+ * web lifecycle does after 15s (`REQUEST_TIMEOUT_MS`, a budget for a whole
+ * round). The socket's 30s idle timeout ran out after it: the browser
+ * abandoned the attempt at 15s, `abortUpstream` then killed the upstream, and
+ * the offline replay that exists for exactly this case was never delivered —
+ * so a hung runtime hid a campaign whose schedule was still running.
+ *
+ * It is a deadline for the request as a whole, not an idle timeout, so neither
+ * a trickling upstream nor the one assembly retry can stretch it, and it only
+ * acts while nothing has been sent to the browser yet.
+ */
+const TOUCHPOINT_DECISION_BUDGET_MS = 10_000;
+
 /** The daemon's own content-assembly parameters, which no browser ever sends. */
 const HELD_CONTENT_PARAMS = ['heldContentId', 'heldContentLocale'] as const;
 
@@ -624,6 +641,17 @@ function proxyTouchpointRuntimeRequest(
   };
   req.once('aborted', abortUpstream);
   res.once('close', abortUpstream);
+  if (contentKey && contentCache) {
+    // Destroying with an error routes into the ordinary unreachable path,
+    // which answers from the store when it can and with 502 when it cannot.
+    const budget = setTimeout(() => {
+      const pending = currentUpstream;
+      if (pending && !res.headersSent && !pending.destroyed)
+        pending.destroy(new Error('Touchpoint decision budget spent'));
+    }, TOUCHPOINT_DECISION_BUDGET_MS);
+    budget.unref?.();
+    res.once('close', () => clearTimeout(budget));
+  }
   /**
    * Answer from the daemon's own store because the runtime could not be
    * reached (OPEND-3436). Reports whether it did, so every caller can fall
