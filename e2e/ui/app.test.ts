@@ -562,6 +562,7 @@ test('[P0] sending preview comments opens the refreshed follow-up artifact', asy
   expect(originalComment.note).toBe(multilineComment);
   await page.setViewportSize({ width: 1280, height: 720 });
   await expect(page.getByTestId('comment-saved-marker-hero-title')).toBeVisible();
+  await expect(floatingComposer).toHaveCount(0);
 
   await expect(sidePanel.getByTestId('comment-side-item').filter({ hasText: 'Make the headline more specific.' }).first()).toBeVisible();
   await page.getByTestId('comment-saved-marker-hero-title').getByRole('button').click();

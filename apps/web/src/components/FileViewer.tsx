@@ -9323,7 +9323,7 @@ function HtmlViewer({
   }, [boardImages]);
   // Read through refs inside the preview message listener, so a keystroke in
   // the draft does not re-subscribe it.
-  const composerHoldsUnsentWork = composerHasUnsentWork({
+  const composerHoldsUnsentWork = Boolean(activeCommentTarget) && composerHasUnsentWork({
     draft: commentDraft,
     queuedNoteCount: queuedBoardNotes.length,
     freshImageCount: boardImages.length,
