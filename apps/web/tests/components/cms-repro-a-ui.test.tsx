@@ -387,6 +387,30 @@ describe("OPEND-3298 context recovery and remaining P1", () => {
     }
   });
 
+  it("shows the healthy presentations when one placement hangs on first display", async () => {
+    decisionReply = (key, locale, id) => key === modal
+      ? new Promise<Response>(() => {}) : Response.json(decision(key, locale, oldGeneration, id));
+    await start();
+    expect(visibleEntry()).toBe(false);
+    // Before the lifecycle's 15s attempt budget abandons every placement.
+    await settle(10_000);
+    expect(visibleEntry()).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+    expect(diagnostics).toContainEqual({ code: "touchpoint_test_placement_timeout" });
+  });
+
+  it("keeps an on-screen presentation when its renewal hangs", async () => {
+    await start();
+    expect(visibleEntry()).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Test campaign" })).not.toBeNull();
+    decisionReply = (key, locale, id) => key === modal
+      ? new Promise<Response>(() => {}) : Response.json(decision(key, locale, oldGeneration, id));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await settle(12_000);
+    expect(visibleEntry()).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Test campaign" })).not.toBeNull();
+  });
+
   it("reports actionable mismatch identities instead of a bare diagnostic code", async () => {
     decisionReply = (key, locale, id) => Response.json({ ...decision(key, locale, oldGeneration, id), snapshotHash: "sha256:other" });
     await start();

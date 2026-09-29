@@ -159,6 +159,23 @@ class TestRuntimeResponseError extends Error {
 	}
 }
 
+/**
+ * One placement that did not answer within its own budget. It is dropped like
+ * any failed presentation so the healthy ones still show, but it never
+ * replaces a presentation that is already on screen.
+ */
+class TestPlacementTimeoutError extends Error {
+	constructor(readonly placementKey: TestCampaignPlacement) {
+		super("touchpoint_test_placement_timeout");
+	}
+}
+
+/**
+ * Budget of one placement request, below the lifecycle's whole-attempt budget
+ * so a hung placement settles before the attempt is abandoned.
+ */
+export const TEST_PLACEMENT_REQUEST_TIMEOUT_MS = 10_000;
+
 /** A decision that disagrees with the selection, carrying both identities. */
 class TestDecisionMismatchError extends Error {
 	constructor(readonly detail: string) {
@@ -901,15 +918,35 @@ export function TestCampaignModal({
 				let withdrawal: unknown = null;
 				try {
 					const settled = await Promise.allSettled(
-						placements.map((placementKey) =>
-							loadPlacement(selectedContext, placementKey, siblings.signal).catch((error: unknown) => {
-								if (touchpointWithdrawsDisplay(error)) {
-									withdrawal ??= error;
-									siblings.abort();
-								}
-								throw error;
-							}),
-						),
+						placements.map((placementKey) => {
+							// A hung placement must not hold back its healthy siblings until the
+							// lifecycle abandons the whole attempt.
+							const request = new AbortController();
+							const cancelRequest = () => request.abort();
+							siblings.signal.addEventListener("abort", cancelRequest, { once: true });
+							let timer: ReturnType<typeof setTimeout> | undefined;
+							const expired = new Promise<never>((_resolve, reject) => {
+								timer = setTimeout(() => {
+									request.abort();
+									reject(new TestPlacementTimeoutError(placementKey));
+								}, TEST_PLACEMENT_REQUEST_TIMEOUT_MS);
+							});
+							return Promise.race([
+								loadPlacement(selectedContext, placementKey, request.signal),
+								expired,
+							])
+								.catch((error: unknown) => {
+									if (touchpointWithdrawsDisplay(error)) {
+										withdrawal ??= error;
+										siblings.abort();
+									}
+									throw error;
+								})
+								.finally(() => {
+									clearTimeout(timer);
+									siblings.signal.removeEventListener("abort", cancelRequest);
+								});
+						}),
 					);
 					if (withdrawal) throw withdrawal;
 					return settled;
@@ -1037,6 +1074,15 @@ export function TestCampaignModal({
 				settled = await loadPlacements(selectedContext);
 				if (!current()) return { kind: "retain" };
 			}
+			// A renewal keeps what is on screen while a placement is merely slow.
+			if (
+				failures(settled).some(
+					(error) =>
+						error instanceof TestPlacementTimeoutError &&
+						active?.decisions.has(error.placementKey),
+				)
+			)
+				return { kind: "retain" };
 			const loaded = isolateTestPresentationFailures(placements, settled);
 			if (!current()) return { kind: "retain" };
 			const decisions = loaded.filter(
