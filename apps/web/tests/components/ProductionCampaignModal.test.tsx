@@ -656,6 +656,57 @@ describe("Production campaign live refresh", () => {
 		return view;
 	};
 
+	it.each(["success", "failure", "stale"] as const)(
+		"handles modal navigation completion: %s",
+		async (outcome) => {
+			let dispatchAction!: (id: string) => Promise<void>;
+			vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
+				async (_entry, _digest, _context, _urls, _actions, options) => {
+					dispatchAction = options!.dispatchAction!;
+				},
+			);
+			Object.defineProperty(navigator, "userActivation", {
+				configurable: true, value: { isActive: true },
+			});
+			vi.stubGlobal("fetch", vi.fn(async (_input, init) =>
+				new Response(JSON.stringify(init?.method === "POST" ? { ok: true } : decision()), { status: 200 }),
+			));
+			let finishNavigation!: (accepted: boolean) => void;
+			openExternalUrlMock.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+				finishNavigation = resolve;
+			}));
+			const view = await open();
+			await tick(16);
+			expect(screen.queryByRole("dialog")).not.toBeNull();
+			let completion!: Promise<unknown>;
+			await act(async () => {
+				completion = dispatchAction("learn").catch((error: Error) => error.message);
+			});
+			expect(screen.queryByRole("dialog")).not.toBeNull();
+			if (outcome === "stale") {
+				view.rerender(<ProductionCampaignModal authenticated sessionSubject="new-user" />);
+				await tick(16);
+			}
+			let result: unknown;
+			await act(async () => {
+				finishNavigation(outcome !== "failure");
+				result = await completion;
+			});
+			if (outcome === "success") {
+				expect(screen.queryByRole("dialog")).toBeNull();
+				await tick(30_000);
+				expect(screen.queryByRole("dialog")).toBeNull();
+			} else {
+				expect(screen.queryByRole("dialog")).not.toBeNull();
+				if (outcome === "failure") {
+					expect(result).toBe("touchpoint_action_denied");
+					await act(async () => { await dispatchAction("learn"); });
+					expect(screen.queryByRole("dialog")).toBeNull();
+				}
+			}
+		},
+	);
+
 	it("discovers a newly published campaign at 30 seconds without a focus event", async () => {
 		await open();
 		expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -1126,6 +1177,27 @@ describe("Production campaign live refresh", () => {
 });
 
 describe("Production campaign action guard", () => {
+	it("rejects an action when the host cannot open the external page", async () => {
+		const { dispatchProductionCampaignAction } = await import(
+			"../../src/components/ProductionCampaignModal"
+		);
+		Object.defineProperty(navigator, "userActivation", {
+			configurable: true,
+			value: { isActive: true },
+		});
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+		openExternalUrlMock.mockResolvedValueOnce(false);
+		const accepted = await dispatchProductionCampaignAction(
+			decision() as any,
+			"learn",
+			1,
+			() => 1,
+			Date.now() + 10_000,
+		);
+		expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
+		expect(accepted).toBe(false);
+	});
+
 	it.each([500, 502, 503])(
 		"consumes an authorized action when telemetry returns %s",
 		async (status) => {

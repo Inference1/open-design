@@ -10,7 +10,7 @@ vi.mock("@open-design/host", () => ({
 	getOpenDesignHost: () => ({ version: 2, client: { type: "desktop", osLocale: "en-US" } }),
 }));
 vi.mock("../../src/providers/registry", () => ({ openExternalUrl: external }));
-vi.mock("../../src/i18n", () => ({ useI18n: () => ({ locale: "en-US" }) }));
+vi.mock("../../src/i18n", () => ({ useI18n: () => ({ locale: "en-US", t: (key: string) => key }) }));
 
 import { ProductionCampaignModal, dispatchProductionCampaignAction } from "../../src/components/ProductionCampaignModal";
 import { clearTestRuntimeSession, setTestRuntimeSession, type TestDecision } from "../../src/components/TestCampaignModal";

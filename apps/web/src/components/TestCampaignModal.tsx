@@ -597,14 +597,18 @@ async function deliverTestAcceptance(
 /**
  * A campaign CTA hands the user to its target and ends the presentation with
  * it: an accepted action closes the host modal, while a refused, expired or
- * failed one rejects to the component and leaves the modal where it is.
+ * failed one rejects to the component and leaves the modal where it is. The
+ * close applies only to the presentation that dispatched the action; one
+ * replaced, revoked or unmounted while the navigation was pending is left to
+ * its own lifecycle.
  */
 export async function completeCampaignAction(
 	accepted: Promise<boolean>,
 	requestClose: (() => void) | undefined,
+	stillCurrent: () => boolean,
 ): Promise<void> {
 	requireCampaignAction(await accepted);
-	requestClose?.();
+	if (stillCurrent()) requestClose?.();
 }
 
 export type TestTouchpointMountProps = Readonly<{
@@ -644,11 +648,13 @@ export function TestTouchpointMount({
 		const container = containerRef.current;
 		if (!container) return;
 		setReady(false);
+		let active = true;
 		const authorized = () =>
+			active &&
 			isAuthorized() &&
 			currentTestSession?.isAuthorized() === true &&
 			currentTestSession.decisions.get(placementKey) === decision;
-		return mountTouchpoint(container, {
+		const dispose = mountTouchpoint(container, {
 			content: decision.content,
 			placementKey,
 			staticActions: decision.staticActions,
@@ -658,9 +664,11 @@ export function TestTouchpointMount({
 			locale: decision.content.locale,
 			isCurrent: authorized,
 			dispatchAction: async (id) => {
+				// Only the modal ends with its CTA; a hover entry stays in place.
 				await completeCampaignAction(
 					dispatchTestCampaignAction(decision, id),
-					requestClose,
+					placementKey === "opend.home.campaign-modal" ? requestClose : undefined,
+					authorized,
 				);
 			},
 			requestClose,
@@ -680,6 +688,10 @@ export function TestTouchpointMount({
 				onPresentedChange?.(false);
 			},
 		});
+		return () => {
+			active = false;
+			dispose();
+		};
 	}, [
 		decision,
 		isAuthorized,

@@ -30,6 +30,7 @@ import {
 	TestTouchpointMount,
 	useTestRuntime,
 } from "../../src/components/TestCampaignModal";
+import * as campaignNavigation from "../../src/components/touchpoint-navigation";
 import * as touchpointComponent from "../../src/components/touchpoint-component";
 import { OpenDesignTouchpointElement } from "../../src/components/touchpoint-component";
 
@@ -1131,5 +1132,43 @@ describe("Test runtime context generation", () => {
 		fireEvent.change(screen.getByLabelText("Test activity"), { target: { value: deployment.id } });
 		await waitFor(() => expect(screen.getByTestId("test-runtime-decision-count")).toHaveTextContent("4"));
 		expect(contextRequests(fetchMock)).toBe(2);
+	});
+});
+
+
+describe("Test modal action dismissal", () => {
+	it.each(["success", "failure", "stale", "unmounted", "hover"] as const)("handles %s", async (outcome) => {
+		let dispatchAction!: (id: string) => Promise<void>;
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({
+			entryUrl: "blob:test-campaign", resourceUrls: new Map(), dispose: vi.fn(),
+		});
+		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
+			async (_entry, _digest, _context, _urls, _actions, options) => {
+				dispatchAction = options!.dispatchAction!;
+			},
+		);
+		Object.defineProperty(navigator, "userActivation", { configurable: true, value: { isActive: true } });
+		let finish!: (accepted: boolean) => void;
+		vi.spyOn(campaignNavigation, "navigateCampaignTarget").mockImplementationOnce(() =>
+			new Promise<boolean>((resolve) => { finish = resolve; }),
+		);
+		const decision = { ...runtime(), staticActions: [{ id: "plan", target: { kind: "https", url: "https://example.com" } }] } as TestDecision;
+		const placement = outcome === "hover" ? "opend.home.hover-entry" : "opend.home.campaign-modal";
+		decision.placementKey = placement;
+		decision.content = { ...decision.content, placementKey: placement, manifest: {
+			...decision.content.manifest, placements: [{ ...manifest.placements[0]!, key: placement, staticActions: decision.staticActions }],
+		} };
+		authorizeMount(decision);
+		const close = vi.fn();
+		const view = render(<TestTouchpointMount decision={decision} placementKey={placement} testId="action-mount" onVisible={vi.fn()} isAuthorized={() => true} requestClose={close} />);
+		await waitFor(() => expect(dispatchAction).toBeTypeOf("function"));
+		const completion = dispatchAction("plan").catch((error: Error) => error.message);
+		expect(close).not.toHaveBeenCalled();
+		if (outcome === "stale") authorizeMount({ ...decision });
+		if (outcome === "unmounted") view.unmount();
+		let result: unknown;
+		await act(async () => { finish(outcome !== "failure"); result = await completion; });
+		expect(close).toHaveBeenCalledTimes(outcome === "success" ? 1 : 0);
+		if (outcome === "failure") expect(result).toBe("touchpoint_action_denied");
 	});
 });

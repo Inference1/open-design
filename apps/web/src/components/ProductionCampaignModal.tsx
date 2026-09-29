@@ -553,6 +553,7 @@ export function ProductionCampaignModal({
 									lifecycle.deadline,
 								),
 								closeProductionModal,
+								() => current() && lifecycle.deadline > Date.now(),
 							),
 						onDiagnostic: emitWebTouchpointDiagnostic,
 					},
