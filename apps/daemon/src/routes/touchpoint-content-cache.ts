@@ -69,6 +69,12 @@ export interface TouchpointContentCache {
    * Rebuild a `contentOmitted` response into a full one, or `null` when the
    * bytes for `held` are not available. `held` is the pair THIS attempt offered
    * upstream; passing it is what binds the answer to the question it answers.
+   *
+   * A trimmed reply is still a complete server answer about schedule and
+   * identity, so a successful rebuild also REPLACES the stored envelope,
+   * schedule and identity with it, exactly as `remember` does for a full one.
+   * Otherwise a renewal that shortened `endsAt` would be served online and
+   * forgotten on disk, and the next offline start would replay the old window.
    */
   reassemble(
     key: TouchpointContentKey,
@@ -81,9 +87,10 @@ export interface TouchpointContentCache {
    * The whole decision to answer with while the runtime is unreachable, or
    * `null` when there is nothing this store may put on the screen.
    *
-   * Also the moment expired records are reclaimed: a schedule that has closed
-   * is deleted here rather than waiting for a network round trip that, by
-   * definition, is not coming.
+   * Also one of the moments expired records are reclaimed: a schedule that
+   * has closed is deleted here rather than waiting for a network round trip
+   * that, by definition, is not coming. The others are the expiry timer armed
+   * at a record's known `endsAt` and the sweep run when the store is created.
    */
   replayOffline(
     key: TouchpointContentKey,
@@ -199,6 +206,23 @@ const keyName = (key: TouchpointContentKey): string =>
  */
 const scopeName = (scope: string): string =>
   createHash('sha256').update(scope).digest('hex').slice(0, 32);
+/**
+ * The decision minus its content, which is exactly the shape `rebuild` splices
+ * content back into — so an offline replay and a trimmed-response rebuild go
+ * through one code path.
+ */
+const envelopeOf = (response: Record<string, unknown>): Record<string, unknown> => {
+  const envelope: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(response)) {
+    if (field === 'content' || field === 'contentOmitted') envelope.contentOmitted = true;
+    else envelope[field] = value;
+  }
+  return envelope;
+};
+/** `setTimeout` treats anything above a signed 32-bit delay as "fire now". */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+/** Upper bound on remembered withdrawals; see the revocation barrier. */
+const MAX_REVOCATIONS = 256;
 
 export function createTouchpointContentCache(runtimeDataDir: string): TouchpointContentCache {
   // Derived from the daemon's resolved data root (AGENTS.md "Daemon data
@@ -386,16 +410,16 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
    * (`held` checks existence before offering anything), never to a package
    * assembled out of the wrong bytes.
    */
-  const reclaim = (key: TouchpointContentKey, record: AssemblyRecord): void => {
-    const file = assemblyFile(key);
+  const reclaim = (file: string, record: AssemblyRecord): void => {
+    disarmExpiry(file);
     unlink(file);
     const live = new Set<string>();
-    for (const sibling of siblingAssemblies(key.scope, file)) {
+    for (const sibling of siblingAssemblies(record.scope, file)) {
       live.add(sibling.entryDigest);
       for (const resource of sibling.resources) live.add(resource.digest);
     }
-    const blobs = blobsDirFor(key.scope);
-    const modules = modulesDirFor(key.scope);
+    const blobs = blobsDirFor(record.scope);
+    const modules = modulesDirFor(record.scope);
     for (const resource of record.resources) {
       if (live.has(resource.digest)) continue;
       const name = blobName(resource.digest);
@@ -408,22 +432,22 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
   };
 
   /**
-   * The record for a key, after retiring it if its window has closed.
+   * The record stored in `file`, after retiring it if its window has closed.
    *
-   * Expiry is evaluated on every read rather than on a timer, because the
-   * cases that matter — a device asleep past the end of an activity, a daemon
+   * Expiry is evaluated on every read, not only on a timer, because the cases
+   * that matter most — a device asleep past the end of an activity, a daemon
    * that was not running, a client with no network to ask — are exactly the
-   * ones where no timer of ours ever fired. `null` therefore means "nothing to
-   * show", and by the time it is returned the bytes are already gone.
+   * ones where no timer of ours ever fired. The expiry timer and the startup
+   * sweep call this same function, so there is one definition of "ended".
+   * `null` therefore means "nothing to show", and by the time it is returned
+   * for an ended record the bytes are already gone.
    */
-  const liveRecord = (
-    key: TouchpointContentKey,
+  const liveRecordIn = (
+    file: string,
+    record: AssemblyRecord,
   ): { record: AssemblyRecord; schedule: TouchpointSchedule; now: number } | null => {
-    const record = readAssembly(key);
-    if (!record) return null;
     const schedule = record.schedule ? touchpointScheduleOf(record.schedule) : null;
     if (!schedule) return null;
-    const file = assemblyFile(key);
     const anchor = marks.get(file);
     // Without a current-process anchor, a startup behind the persisted local
     // clock hides an unknown amount of downtime. Keep the bytes available for
@@ -445,7 +469,7 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     if (now > record.clock.observedAt) {
       try {
         writeFileAtomically(
-          assemblyFile(key),
+          file,
           JSON.stringify({ ...record, clock: { ...record.clock, observedAt: now } }),
         );
       } catch {
@@ -455,11 +479,146 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     const elapsed = Math.max(0, now - record.clock.fetchedAt);
     const effective = Date.parse(schedule.serverTime) + elapsed;
     if (touchpointScheduleHasEnded(schedule, effective)) {
-      reclaim(key, record);
+      reclaim(file, record);
       return null;
     }
     return { record, schedule, now: effective };
   };
+
+  const liveRecord = (key: TouchpointContentKey) => {
+    const record = readAssembly(key);
+    return record ? liveRecordIn(assemblyFile(key), record) : null;
+  };
+
+  /**
+   * One pending expiry per assembly file, armed at the record's known `endsAt`.
+   *
+   * A running daemon must not wait for the next read to retire an ended
+   * activity: while the client is offline that read may never come, and the
+   * package would sit on disk past its window. The timer only ever calls
+   * `liveRecordIn`, so it can reclaim nothing a read would not; if it fires
+   * early (the wall clock was stepped, or the delay was clamped) the record is
+   * still live and the timer is simply re-armed for what remains.
+   *
+   * Timers are `unref`'d: pending cleanup never keeps the daemon alive.
+   */
+  const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const disarmExpiry = (file: string): void => {
+    const pending = expiryTimers.get(file);
+    if (pending !== undefined) clearTimeout(pending);
+    expiryTimers.delete(file);
+  };
+  const armExpiry = (file: string, schedule: TouchpointSchedule, effectiveNow: number): void => {
+    disarmExpiry(file);
+    const remaining = Date.parse(schedule.endsAt) - effectiveNow;
+    if (!Number.isFinite(remaining)) return;
+    const timer = setTimeout(
+      () => {
+        expiryTimers.delete(file);
+        const record = parseAssembly(file);
+        const live = record ? liveRecordIn(file, record) : null;
+        if (live) armExpiry(file, live.schedule, live.now);
+      },
+      Math.min(Math.max(0, remaining), MAX_TIMER_DELAY_MS),
+    );
+    timer.unref?.();
+    expiryTimers.set(file, timer);
+  };
+  /** Arms expiry for a record just written from a fresh answer, whose effective time is its own `serverTime`. */
+  const armExpiryForFresh = (file: string, schedule: TouchpointSchedule | null): void => {
+    if (!schedule) {
+      disarmExpiry(file);
+      return;
+    }
+    armExpiry(file, schedule, Date.parse(schedule.serverTime));
+  };
+
+  /**
+   * Revocation barrier: deliveries this process saw withdrawn, and the
+   * server time the withdrawal was observed at.
+   *
+   * Two requests for one placement can be in flight at once (two windows, a
+   * focus refresh racing a timer). If the runtime answers one with a matching
+   * 410 and the other, sent earlier, with a full 200 that arrives later, that
+   * late 200 describes a delivery the server has since taken down. Writing it
+   * would put the revoked version back on disk, ready to replay on the next
+   * offline start. An answer for a withdrawn delivery is therefore accepted
+   * only when the server gave it AFTER the withdrawal; one that cannot say when
+   * it was given cannot prove that, and is refused.
+   *
+   * In memory on purpose: the record itself is deleted on withdrawal, so after
+   * a restart there is nothing to resurrect and no in-flight request survives
+   * to try. Bounded so a long-running daemon cannot grow it without limit.
+   */
+  const revocations = new Map<string, number>();
+  const deliveryName = (scope: string, identity: TouchpointCachedIdentity): string =>
+    [scope, identity.activityId, identity.deploymentId, identity.contentVersionId].join('\u0000');
+  const recordRevocation = (record: AssemblyRecord): void => {
+    if (!record.identity) return;
+    const name = deliveryName(record.scope, record.identity);
+    revocations.delete(name);
+    revocations.set(name, serverTimeOf(record));
+    while (revocations.size > MAX_REVOCATIONS) {
+      const oldest = revocations.keys().next().value;
+      if (oldest === undefined) break;
+      revocations.delete(oldest);
+    }
+  };
+  /** The server time a stored record is at now, or +Infinity when it never said. */
+  const serverTimeOf = (record: AssemblyRecord): number => {
+    const stated = Date.parse(String(record.schedule?.serverTime ?? record.envelope.serverTime));
+    if (!Number.isFinite(stated)) return Number.POSITIVE_INFINITY;
+    return stated + Math.max(0, Math.max(record.clock.observedAt, nowEstimate()) - record.clock.fetchedAt);
+  };
+  const answerPredatesRevocation = (
+    scope: string,
+    identity: TouchpointCachedIdentity | null,
+    serverTime: unknown,
+  ): boolean => {
+    if (!identity) return false;
+    const revokedAt = revocations.get(deliveryName(scope, identity));
+    if (revokedAt === undefined) return false;
+    const answeredAt = Date.parse(String(serverTime));
+    return !Number.isFinite(answeredAt) || answeredAt <= revokedAt;
+  };
+
+  /**
+   * Retires every record whose window closed while nobody was reading it —
+   * the daemon was not running, or the device slept through `endsAt` — and
+   * arms expiry for the ones still live, before the first request arrives.
+   *
+   * Walks the directory rather than the keys, because a record's file name is
+   * a hash of the REQUESTED locale, which the record itself does not store.
+   * Each record is checked against the scope directory it sits in, so a stray
+   * file can never make this reclaim blobs in another account's pool.
+   */
+  const sweepExpired = (): void => {
+    let scopes: string[];
+    try {
+      scopes = fs.readdirSync(root);
+    } catch {
+      return;
+    }
+    for (const scopeDir of scopes) {
+      const dir = path.join(root, scopeDir, 'assemblies');
+      let names: string[];
+      try {
+        names = fs.readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        if (!name.endsWith('.json') || name.startsWith('.')) continue;
+        const file = path.join(dir, name);
+        const record = parseAssembly(file);
+        if (!record || scopeName(record.scope) !== scopeDir) continue;
+        const live = liveRecordIn(file, record);
+        if (live) armExpiry(file, live.schedule, live.now);
+      }
+    }
+  };
+
+  sweepExpired();
 
   return {
     held(key) {
@@ -479,7 +638,9 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     reassemble(key, held, trimmed) {
       const record = readAssembly(key);
       if (!record || !recordStillHolds(record, held)) return null;
-      return rebuild(key, record, trimmed);
+      const full = rebuild(key, record, trimmed);
+      if (full) adoptRenewal(key, record, full, trimmed);
+      return full;
     },
 
     replayOffline(key, reason) {
@@ -506,7 +667,8 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     forgetWithdrawn(key, body) {
       const record = readAssembly(key);
       if (!record || !touchpointWithdrawalReclaims(body, record.identity)) return false;
-      reclaim(key, record);
+      recordRevocation(record);
+      reclaim(assemblyFile(key), record);
       return true;
     },
 
@@ -541,6 +703,8 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
           !Array.isArray(resources)
         )
           return;
+        const identity = touchpointCachedIdentityOf(response);
+        if (answerPredatesRevocation(key.scope, identity, response.serverTime)) return;
         const entryBytes = Buffer.from(entryModule, 'utf8');
         if (!blobName(entryDigest) || sha256(entryBytes) !== entryDigest) return;
         const stored: CachedResource[] = [];
@@ -574,14 +738,7 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
         for (const blob of pending) {
           if (!storeBlob(blob.dir, blob.digest, blob.data)) return;
         }
-        // The envelope is the decision minus its content, which is exactly the
-        // shape `reassemble` splices content back into — so an offline replay
-        // and a trimmed-response rebuild go through one code path.
-        const envelope: Record<string, unknown> = {};
-        for (const [field, value] of Object.entries(response)) {
-          if (field === 'content') envelope.contentOmitted = true;
-          else envelope[field] = value;
-        }
+        const envelope = envelopeOf(response);
         const fetchedAt = nowEstimate();
         const record: AssemblyRecord = {
           version: ASSEMBLY_VERSION,
@@ -612,19 +769,60 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
           // guarantee, not a client deciding which of the server's answers it
           // prefers. Opposite directions, on purpose.
           schedule: touchpointScheduleOf(response),
-          identity: touchpointCachedIdentityOf(response),
+          identity,
           clock: { fetchedAt, observedAt: fetchedAt },
           envelope,
         };
-        writeFileAtomically(assemblyFile(key), JSON.stringify(record));
-        // A fresh server answer establishes its own elapsed-time baseline,
-        // including after an uncertain restart or a corrected device clock.
-        marks.set(assemblyFile(key), { wall: fetchedAt, at: performance.now() });
+        writeFresh(key, record);
       } catch {
         /* A cache that cannot be written changes nothing the caller has to act on. */
       }
     },
   };
+
+  /**
+   * Writes a record that holds a fresh server answer, and everything a fresh
+   * answer resets: the elapsed-time baseline (including after an uncertain
+   * restart or a corrected device clock) and the expiry timer.
+   */
+  function writeFresh(key: TouchpointContentKey, record: AssemblyRecord): void {
+    const file = assemblyFile(key);
+    writeFileAtomically(file, JSON.stringify(record));
+    marks.set(file, { wall: record.clock.fetchedAt, at: performance.now() });
+    armExpiryForFresh(file, record.schedule);
+  }
+
+  /**
+   * Persists what a trimmed renewal says about the delivery it renews.
+   *
+   * The bytes are unchanged by construction (the server trimmed against the
+   * very version `held` named), so only the envelope, schedule, identity and
+   * clock are replaced — with the same REPLACE, never-merge rule `remember`
+   * follows, so a renewal that ends the activity early takes effect offline
+   * too. Best-effort like every write here: failing to persist leaves the
+   * previous record, never a wrong one being served now.
+   */
+  function adoptRenewal(
+    key: TouchpointContentKey,
+    record: AssemblyRecord,
+    full: Record<string, unknown>,
+    trimmed: Record<string, unknown>,
+  ): void {
+    try {
+      const identity = touchpointCachedIdentityOf(full);
+      if (answerPredatesRevocation(key.scope, identity, trimmed.serverTime)) return;
+      const fetchedAt = nowEstimate();
+      writeFresh(key, {
+        ...record,
+        schedule: touchpointScheduleOf(trimmed),
+        identity,
+        clock: { fetchedAt, observedAt: fetchedAt },
+        envelope: envelopeOf(trimmed),
+      });
+    } catch {
+      /* A cache that cannot be written changes nothing the caller has to act on. */
+    }
+  }
 
   /**
    * Splices this record's content back into a decision envelope.
