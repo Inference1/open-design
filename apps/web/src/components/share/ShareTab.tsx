@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { fetchProjectFileSharePlan } from '../../providers/registry';
-import type { SharePlanSummary } from '@open-design/contracts';
+import type { EntryIndexConflictDetails, SharePlanSummary } from '@open-design/contracts';
 import { useShareScopeKeyboard } from './useShareScopeKeyboard';
 import { Button } from '@open-design/components';
 import { ShareButton } from './ShareButton';
@@ -16,8 +16,13 @@ import { LinkAccessRow } from './LinkAccessRow';
 import { ShareNoticeRow } from './ShareNoticeRow';
 import { ShareErrorRow } from './ShareErrorRow';
 import { ShareProgressButton } from './ShareProgressButton';
+import { ShareConflictRow } from './ShareConflictRow';
 import styles from './ShareTab.module.css';
-export type SharePublishFailureKey = PublicFilePublishFailureKey | 'fileViewer.publishFileTooLarge' | 'fileViewer.unpublishFileFailed';
+export type SharePublishFailureKey =
+  | PublicFilePublishFailureKey
+  | 'fileViewer.publishFileTooLarge'
+  | 'fileViewer.publishFileEntryIndexConflict'
+  | 'fileViewer.unpublishFileFailed';
 
 /** Deployment custom domains may vary; only open browser-safe HTTP(S) URLs. */
 function browsableSharePageUrl(rawUrl: string): string | null {
@@ -136,6 +141,7 @@ export function ShareTab({
   viewerOnlyDisabledTitle,
   publishCurrentFilePublic,
   publishFailureKey,
+  publishConflict = null,
   streaming,
   sharePageUrl,
   canCopyShareLink,
@@ -174,6 +180,8 @@ export function ShareTab({
   viewerOnlyDisabledTitle: string;
   publishCurrentFilePublic: (mode?: 'resume') => Promise<void>;
   publishFailureKey: SharePublishFailureKey | null;
+  /** Details of a publish refused for an entry/index.html conflict (409). */
+  publishConflict?: EntryIndexConflictDetails | null;
   streaming: boolean;
   sharePageUrl: string;
   canCopyShareLink: boolean;
@@ -207,6 +215,13 @@ export function ShareTab({
     return () => { cancelled = true; };
   }, [projectId, filePath, workspaceContext, canPublishPublic, viewerOnly, publicationStatus]);
   const planTooLarge = sharePlan?.exceedsSizeLimit === true;
+  // Preflight blockers refuse publishing like the size limit does; a 409 from
+  // an attempt made before the plan arrived carries the same details.
+  const planBlocker = sharePlan?.blockers?.[0] ?? null;
+  const planBlocked = planBlocker !== null;
+  // A 409 is newer than the plan fetched when the panel opened, so it stays
+  // until the panel is reopened (which clears it and starts a fresh attempt).
+  const shownConflict = planBlocker ?? publishConflict;
   // K1/K4: while a comment backfill is pending, it replaces the primary
   // action itself (progress bar or busy button) instead of stacking a
   // second dark pill below a link the visitor can't fully trust yet.
@@ -268,7 +283,7 @@ export function ShareTab({
                         label={t('fileViewer.linkAccessTitle')}
                         description={t('fileViewer.linkAccessDescription')}
                         checked={linkAccessChecked}
-                        disabled={!canMutatePublicShare || viewerOnly || publishingPublicFile || (!filePublished && (streaming || sharePlanPending))}
+                        disabled={!canMutatePublicShare || viewerOnly || publishingPublicFile || (!filePublished && (streaming || sharePlanPending || planBlocked))}
                         title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
                         onToggle={() => {
                           if (!canMutatePublicShare || viewerOnly) return;
@@ -282,7 +297,9 @@ export function ShareTab({
                         // project in the team catalog, so say so before the first publish.
                         <p className={styles.publishHint} role="note">{t('fileViewer.publishMakesProjectTeamVisible')}</p>
                       ) : null}
-                      {publishFailureKey ? (
+                      {shownConflict ? (
+                        <ShareConflictRow conflict={shownConflict} t={t} />
+                      ) : publishFailureKey && publishFailureKey !== 'fileViewer.publishFileEntryIndexConflict' ? (
                         <ShareErrorRow message={t(publishFailureKey)} />
                       ) : planTooLarge && sharePlan ? (
                         // No yellow advisory here (2026 UI audit: G4/S1/S2/S7/S15 — delete, no
@@ -349,7 +366,7 @@ export function ShareTab({
                             action={
                               <ShareButton
                                 variant="soft"
-                                disabled={!canMutatePublicShare || viewerOnly || streaming || publishingPublicFile || sharePlanPending || planTooLarge}
+                                disabled={!canMutatePublicShare || viewerOnly || streaming || publishingPublicFile || sharePlanPending || planTooLarge || planBlocked}
                                 aria-busy={publishingPublicFile || undefined}
                                 onClick={() => { if (canMutatePublicShare && !viewerOnly) void updateCurrentFilePublic?.(); }}
                               >
@@ -373,7 +390,7 @@ export function ShareTab({
                           hoverLighten={false}
                           transparentWhenBusy={publishingPublicFile && publicationStatus !== 'stopped' && publishProgress !== null}
                           role="menuitem"
-                          disabled={streaming || viewerOnly || publishingPublicFile || sharePlanPending || planTooLarge || (initialUnpublished && !prepublishLinkAccess)}
+                          disabled={streaming || viewerOnly || publishingPublicFile || sharePlanPending || planTooLarge || planBlocked || (initialUnpublished && !prepublishLinkAccess)}
                           aria-busy={publishingPublicFile}
                           title={viewerOnly ? viewerOnlyDisabledTitle : streaming ? t('fileViewer.shareAfterGenerationComplete') : undefined}
                           onClick={() => {

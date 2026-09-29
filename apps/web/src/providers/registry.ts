@@ -1,5 +1,6 @@
 import {
   PUBLIC_FILE_MANUAL_REVOKE_REQUIRED,
+  SHARE_ENTRY_INDEX_CONFLICT,
   workspaceContextHasTeamIdentity,
   type PublicFileManualRevokeRequiredData,
   type ProjectFilePublicShareResponse,
@@ -108,7 +109,7 @@ import {
   workspaceAccountScopedCacheKey,
   currentWorkspaceAccountGeneration,
 } from '../collab/workspace-identity';
-import { PublicFilePublishError } from '../collab/public-file-publish';
+import { parseEntryIndexConflictDetails, PublicFilePublishError } from '../collab/public-file-publish';
 import { clientRequestIdHeaders, withDaemonFailure } from '../analytics/failure-detail';
 
 /**
@@ -2002,6 +2003,7 @@ export async function publishProjectFilePublic(
         recoveryData?.projectId === projectId && recoveryData.fileName === fileName
           ? recoveryData
           : undefined,
+        code === SHARE_ENTRY_INDEX_CONFLICT ? parseEntryIndexConflictDetails(structuredError?.data) : undefined,
       ),
       { failure: payload?.failure, daemonErrorCode: code },
     );
