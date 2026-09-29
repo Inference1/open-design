@@ -1362,10 +1362,21 @@ describe('team-shared project with unresolved owner identity', () => {
   });
 });
 
+function stubUnsharedProjectDelete() {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const projectId = String(input).match(/\/api\/projects\/([^/]+)\/share-state/)?.[1];
+    if (!projectId) throw new Error(`Unexpected fetch: ${String(input)}`);
+    return new Response(JSON.stringify({
+      projectId, hasEverShared: false, bindingExists: false, publications: [],
+    }), { headers: { 'Content-Type': 'application/json' } });
+  }));
+}
+
 describe('A5 — main no-share delete baseline', () => {
   // Recorded before A5 implementation; production dialog and translations are
   // byte-identical to main 8e372744dda55f3b2d090d5bcdfd6ceabdc119b5.
-  it('preserves the no-share dialog DOM and cancelling never deletes', () => {
+  it('preserves the no-share dialog DOM and cancelling never deletes', async () => {
+    stubUnsharedProjectDelete();
     const onDelete = vi.fn();
     render(
       <RecentProjectsStrip
@@ -1377,6 +1388,7 @@ describe('A5 — main no-share delete baseline', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     const dialog = screen.getByRole('alertdialog');
+    await within(dialog).findByText('Delete "My project"?');
     // React useId depends on prior renders, not product state. Preserve every
     // other byte, including the title/aria-labelledby relationship.
     const titleId = dialog.getAttribute('aria-labelledby')!;
@@ -1395,6 +1407,7 @@ describe('recvqbh189zBY6 — single-card delete confirmation', () => {
   // 403/network failure closed the confirm dialog exactly like a success —
   // the project stayed put with no signal anything had gone wrong.
   it('keeps the dialog open with a visible error when the delete request fails', async () => {
+    stubUnsharedProjectDelete();
     const onDelete = vi.fn(async () => false);
     render(
       <RecentProjectsStrip
@@ -1408,6 +1421,7 @@ describe('recvqbh189zBY6 — single-card delete confirmation', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
     const dialog = await screen.findByRole('alertdialog');
+    await within(dialog).findByText('Delete "My project"?');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
@@ -1419,6 +1433,7 @@ describe('recvqbh189zBY6 — single-card delete confirmation', () => {
   });
 
   it('closes the dialog on a successful delete', async () => {
+    stubUnsharedProjectDelete();
     const onDelete = vi.fn(async () => true);
     render(
       <RecentProjectsStrip
@@ -1432,6 +1447,7 @@ describe('recvqbh189zBY6 — single-card delete confirmation', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
     const dialog = await screen.findByRole('alertdialog');
+    await within(dialog).findByText('Delete "My project"?');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
@@ -1441,6 +1457,7 @@ describe('recvqbh189zBY6 — single-card delete confirmation', () => {
   });
 
   it('submits at most one delete while the request is pending', async () => {
+    stubUnsharedProjectDelete();
     let resolveDelete!: (value: true) => void;
     const pendingDelete = new Promise<true>((resolve) => {
       resolveDelete = resolve;
@@ -1458,6 +1475,7 @@ describe('recvqbh189zBY6 — single-card delete confirmation', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
     const dialog = await screen.findByRole('alertdialog');
+    await within(dialog).findByText('Delete "My project"?');
     const deleteButton = within(dialog).getByRole('button', { name: 'Delete' });
     fireEvent.click(deleteButton);
     fireEvent.click(deleteButton);

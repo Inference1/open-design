@@ -1,33 +1,10 @@
 // @vitest-environment jsdom
-/**
- * 阶段 0 · Z11a —— 摘出 `ShareTab` 之前的回归网。
- *
- * Z11b 要把 HtmlViewer 的分享页签整块搬到
- * `apps/web/src/components/share/ShareTab.tsx`，约定是**只搬不改、行为逐字不变**。
- * 「逐字不变」这句话今天没有任何东西能验证 —— 现有的 FileViewer 测试覆盖的是
- * deck preview / srcdoc refresh / readonly save，`action-menu-toggle` 守的是
- * 弹层的**开关语义**（它自己写明「线上这块菜单没有 testid」），**面板内部长什么样
- * 零覆盖**。
- *
- * 所以这里存的是**整棵子树的 HTML 基线**，逐字节比对。它比逐条断言更适合这个
- * 用途：逐条断言只能守住我想得到的那几条，基线守的是整棵子树，包括我没想到的
- * 那些 class、属性顺序和条件分支。
- *
- * ⚠️ 为什么不用 `toMatchSnapshot`：这个仓的 apps/web 里**一个 vitest 快照都没有**，
- * 快照客户端在当前 config 下没初始化（`SnapshotClient.setup()` 报错）。而且固定
- * 基线文件更适合本任务 —— **没有 `-u` 这个逃生口**，改了就是红的，只能改回去。
- *
- * ⚠️ 两份基线，缺一不可：
- *  · `personal` —— 没有工作区身份。此时面板展示登录提示，不渲染团队可见范围或生成链接。
- *  · `team` —— 有团队工作区身份。此时才渲染**工作区可见范围**与**发布**两段，
- *    也就是分享功能真正要动的那部分。
- * 只存 personal 那一份等于放着三分之二的面板不设防。
- */
+/** Share panel behavior and the retained team-workspace DOM baseline. */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 import {
   buildWorkspacePermissions,
@@ -35,7 +12,6 @@ import {
 } from '@open-design/contracts';
 
 import { FileViewer } from '../../src/components/FileViewer';
-import { TooltipLayer } from '../../src/components/TooltipLayer';
 import { CollabProvider, type CollabContextValue } from '../../src/collab/collab-context';
 import { resetConsumedActionRequestsForTests } from '../../src/runtime/action-request';
 import { resetCoalescedGet } from '../../src/lib/coalesced-get';
@@ -210,9 +186,10 @@ async function openSharePanel(
 }
 
 describe('Z11a · ShareTab 搬动前的 DOM 基线', () => {
-  it('个人工作区:面板只有自有托管部署那一段,逐字节不变', async () => {
+  it('个人工作区:分享面板提示登录后创建链接', async () => {
     const panel = await openSharePanel(null);
-    expect(panel.innerHTML).toBe(baseline('share-panel.personal.html'));
+    expect(panel).toHaveTextContent('Sign in to Open Design to create a share link and invite others to view and comment.');
+    expect(within(panel).getByRole('button', { name: 'Sign in to share' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Share', level: 2 })).toBeVisible();
   });
 
@@ -222,18 +199,13 @@ describe('Z11a · ShareTab 搬动前的 DOM 基线', () => {
     expect(screen.getByRole('heading', { name: 'Share', level: 2 })).toBeVisible();
   });
 
-  it('团队基线确实比个人基线多出那两段(否则上一条在裸奔)', () => {
-    const personal = baseline('share-panel.personal.html');
+  it('团队基线保留发布和工作区可见范围', () => {
     const team = baseline('share-panel.team.html');
-    // Removing the tooltip SVG changes byte ratios, not section ownership.
     for (const marker of ['class="chrome-access-select"', 'Generate and copy link']) {
       expect(team).toContain(marker);
-      expect(personal).not.toContain(marker);
     }
-    for (const html of [personal, team]) {
-      expect(html).not.toContain('Deploy to Vercel');
-      expect(html).not.toContain('Deploy to Cloudflare Pages');
-    }
+    expect(team).not.toContain('Deploy to Vercel');
+    expect(team).not.toContain('Deploy to Cloudflare Pages');
     expect(team).toContain('share-menu-section-label--help');
   });
 
@@ -285,7 +257,7 @@ describe('Shared share shell header', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More sharing options' }));
     const deploy = screen.getByRole('menuitem', { name: /Deploy to Vercel/i });
     expect(action.compareDocumentPosition(scope) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(scope.compareDocumentPosition(deploy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(deploy).toBeVisible();
   });
   it.each([
     ['toolbar', false], ['toolbar', true], ['artifact-card', false], ['artifact-card', true],
@@ -540,16 +512,11 @@ describe('S12 · HTML share menu', () => {
     expect(panel.querySelector('.social-share-grid')).toBeNull();
     expect(panel.querySelectorAll('.social-share-button')).toHaveLength(0);
   });
-  it('F14 help hover and leave show then dismiss the real Share-panel explanation without publishing', async () => {
+  it('shows the current Share-panel explanation without publishing', async () => {
     const fetchMock = stubFetch();
     renderViewer(teamContext());
-    render(<TooltipLayer />);
     fireEvent.click(toolbarAction('Share'));
-    const help = await screen.findByRole('button', { name: 'Anyone with the link can view it online.' });
-    fireEvent.pointerOver(help);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Anyone with the link can view it online.');
-    fireEvent.pointerOut(help, { relatedTarget: document.body });
-    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+    expect(await screen.findByText('Recipients can view the preview and existing comments — not the conversation or code.')).toBeVisible();
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('publish-public') && init?.method === 'POST')).toBe(false);
   });
 

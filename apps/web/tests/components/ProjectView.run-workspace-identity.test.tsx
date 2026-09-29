@@ -1803,6 +1803,7 @@ describe('a Home auto-send observes a project billing scope that settles after m
         PROJECT_ID,
         `conv-${PROJECT_ID}`,
         CALLER_CONTEXT,
+        true,
       );
     });
   });

@@ -181,7 +181,8 @@ it('S15 blocks an over-limit planned file before publish, then rechecks a smalle
   renderProjectFileViewer(teamWorkspaceContext(), props);
   fireEvent.click(await screen.findByRole('button', { name: /^share$/i }));
   const generate = await screen.findByRole('menuitem', { name: /generate and copy link/i });
-  const warning = await screen.findByRole('alert');
+  const warning = (await screen.findByText(/20\.00 MiB/)).closest('[role="status"]');
+  expect(warning).not.toBeNull();
   expect(warning).toHaveTextContent('20 MiB');
   expect(warning).toHaveTextContent('20.00 MiB');
   expect(generate).toBeDisabled();
