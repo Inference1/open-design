@@ -17407,6 +17407,7 @@ export async function startServer({
       },
     },
     telemetry: {
+      taskTelemetryForRun: (runId) => taskObservationRollout.telemetryForRun(runId),
       reportRunCompletionTelemetryFallback,
       resolveRunProjectKindForAnalytics,
       runArtifactBaselines,
