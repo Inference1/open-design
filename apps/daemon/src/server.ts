@@ -2552,8 +2552,8 @@ export function createFinalizedMessageTelemetryReporter({
   return reportFinalized;
 }
 
-export function shouldReportRunCompletionTelemetryFallbackStatus(status: unknown): boolean {
-  return status === 'failed' || status === 'canceled';
+export function shouldReportRunCompletionTelemetryFallbackStatus(status: unknown, taskOwned = false): boolean {
+  return status === 'failed' || status === 'canceled' || (status === 'succeeded' && taskOwned);
 }
 
 const PROJECT_PREVIEW_SCOPE_TTL_MS = 60 * 60 * 1000;
@@ -8030,7 +8030,10 @@ export async function startServer({
     run: any;
     status: string;
   }) => {
-    if (!shouldReportRunCompletionTelemetryFallbackStatus(status)) return;
+    // Headless Task consumers do not save a final assistant message. Keep the UI
+    // grace period and durable delivery gates, but also settle successful Tasks.
+    const taskOwned = status === 'succeeded' && Boolean(getStrategyTaskExecutionByRunId(db, run.id));
+    if (!shouldReportRunCompletionTelemetryFallbackStatus(status, taskOwned)) return;
     const timer = setTimeout(() => {
       terminalTelemetryFallbackTimers.delete(timer);
       if (reportedRuns.has(run.id)) return;
