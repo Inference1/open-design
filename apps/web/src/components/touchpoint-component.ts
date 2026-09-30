@@ -718,21 +718,18 @@ export function trapWebTouchpointModalFocus(
 ) {
 	if (event.key !== "Tab" || !modal) return;
 	const focusable = composedFocusableElements(modal);
-	if (focusable.length === 0) {
-		event.preventDefault();
-		modal.focus();
-		return;
-	}
-	const first = focusable[0]!;
-	const last = focusable[focusable.length - 1]!;
 	const active = composedActiveElement();
-	if (event.shiftKey && active === first) {
-		event.preventDefault();
-		last.focus();
-	} else if (!event.shiftKey && active === last) {
-		event.preventDefault();
-		first.focus();
+	const ordered = event.shiftKey ? [...focusable].reverse() : focusable;
+	const index = ordered.findIndex((candidate) => candidate === active);
+	const candidates = [...ordered.slice(index + 1), ...ordered.slice(0, index + 1)];
+	// Selector matches can refuse focus. Walk the actual Tab direction and wrap
+	// past those controls, rather than letting a refusing boundary escape the trap.
+	event.preventDefault();
+	for (const candidate of candidates) {
+		candidate.focus();
+		if (composedActiveElement() === candidate) return;
 	}
+	modal.focus();
 }
 
 export function webTouchpointContext(

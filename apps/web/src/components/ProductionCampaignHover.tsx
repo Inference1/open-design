@@ -4,7 +4,7 @@ import {
 	useTestRuntime,
 } from "./TestCampaignModal";
 import { useI18n } from "../i18n";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { getOpenDesignHost } from "@open-design/host";
 import {
 	emitWebTouchpointDiagnostic,
@@ -111,6 +111,9 @@ export function ProductionCampaignHover({
 	sessionSubject: string | null;
 }) {
 	const testRuntime = useTestRuntime();
+	// A sibling entering or leaving the session must not rebuild this placement.
+	const testRuntimeRef = useRef(testRuntime);
+	testRuntimeRef.current = testRuntime;
 	const { locale } = useI18n();
 	const testEntry = testRuntime?.decisions.get(ENTRY_PLACEMENT);
 	const testLayer = testRuntime?.decisions.get(LAYER_PLACEMENT);
@@ -238,8 +241,9 @@ export function ProductionCampaignHover({
 	const active = lifecycle.current;
 	// Renewing the same lease must not change the overlay mount identity.
 	const isTestAuthorized = useCallback(
-		() => testRuntime?.isAuthorized() === true,
-		[testRuntime],
+		() => testRuntimeRef.current?.isAuthorized(ENTRY_PLACEMENT) === true &&
+			testRuntimeRef.current.isAuthorized(LAYER_PLACEMENT),
+		[],
 	);
 	const isProductionAuthorized = useCallback(
 		() => lifecycle.isCurrent(lifecycle.generation),
@@ -251,10 +255,10 @@ export function ProductionCampaignHover({
 	);
 	const onTestVisible = useCallback(
 		(decision: TestDecision, placementKey: TestCampaignPlacement) => {
-			if (testRuntime)
-				recordVisibleTestTouchpoint(testRuntime, decision, placementKey);
+			const runtime = testRuntimeRef.current;
+			if (runtime) recordVisibleTestTouchpoint(runtime, decision, placementKey);
 		},
-		[testRuntime],
+		[],
 	);
 	const onEntryVisible = useCallback(() => {
 		if (testEntry) onTestVisible(testEntry, ENTRY_PLACEMENT);

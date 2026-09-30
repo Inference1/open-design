@@ -638,12 +638,17 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
    * say when it was given cannot be ordered and is not refused here; a record
    * with no server time is never replayed in the first place.
    */
-  const answerPredatesStored = (key: TouchpointContentKey, serverTime: unknown): boolean => {
+  const answerPredatesStored = (key: TouchpointContentKey, serverTime: unknown, held?: AssemblyRecord): boolean => {
     const answeredAt = Date.parse(String(serverTime));
     if (!Number.isFinite(answeredAt)) return false;
-    const stored = readAssembly(key);
+    const stored = held ?? readAssembly(key);
     if (!stored) return false;
     const storedAt = statedServerTimeOf(stored);
+    // A future server clock must not fence corrected answers (including early
+    // ends) for the rest of the activity. Allow a small ordinary clock lead,
+    // measured against that record's receive time rather than its aged clock.
+    const ORDERING_CLOCK_SKEW_MS = 5_000;
+    if (storedAt > stored.clock.fetchedAt + ORDERING_CLOCK_SKEW_MS) return false;
     return Number.isFinite(storedAt) && answeredAt < storedAt;
   };
 
@@ -883,7 +888,7 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     try {
       const identity = touchpointCachedIdentityOf(full);
       if (answerPredatesRevocation(key.scope, identity, trimmed.serverTime)) return;
-      if (answerPredatesStored(key, trimmed.serverTime)) return;
+      if (answerPredatesStored(key, trimmed.serverTime, record)) return;
       const fetchedAt = nowEstimate();
       writeFresh(key, {
         ...record,

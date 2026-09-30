@@ -209,7 +209,8 @@ export type TouchpointLifecycleLoad<T> =
 	 * known `endsAt`, measured from the same `serverTime` as `validForMs`. See
 	 * {@link holdThroughSchedule} for when it applies.
 	 */
-	| Readonly<{ kind: "decision"; value: T; key: string; validForMs: number; offlineValidForMs?: number; offlineRecovery?: TouchpointOfflineRecovery }>
+	/** Composite leases update their placement set while retaining the session generation. */
+	| Readonly<{ kind: "decision"; value: T; key: string; validForMs: number; replaceValue?: boolean; offlineValidForMs?: number; offlineRecovery?: TouchpointOfflineRecovery }>
 	| Readonly<{ kind: "waiting"; retryAfterMs: number }>
 	| Readonly<{ kind: "retain" }>
 	| Readonly<{ kind: "clear"; ended?: boolean }>;
@@ -765,7 +766,7 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError, of
 					(!resumed || elapsed(previous.start) < previous.validForMs);
 				if (!same) ++generation.current;
 				fencedMount.current = null;
-				lease.current = { identity, key: result.key, value: same ? previous.value : result.value, generation: generation.current, start: started, validForMs: result.validForMs, offlineValidForMs: result.offlineValidForMs };
+				lease.current = { identity, key: result.key, value: same && !result.replaceValue ? previous.value : result.value, generation: generation.current, start: started, validForMs: result.validForMs, offlineValidForMs: result.offlineValidForMs };
 				revalidationLease = null;
 				publish();
 				armExpiry();

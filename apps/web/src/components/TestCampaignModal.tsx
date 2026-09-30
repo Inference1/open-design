@@ -15,9 +15,7 @@ import {
 	requireCampaignAction,
 } from "./touchpoint-navigation";
 import {
-	REQUEST_TIMEOUT_MS,
 	TEST_MAX_AUTHORIZATION_MS,
-	TOUCHPOINT_POLL_MS,
 	type TouchpointLifecycleLoad,
 	resolveAuthorizationDeadline,
 	touchpointWithdrawsDisplay,
@@ -75,9 +73,12 @@ export type TestRuntimeSession = Readonly<{
 	deployment: TestDeployment;
 	context: TestContext;
 	decisions: ReadonlyMap<TestCampaignPlacement, TestDecision>;
-	isAuthorized: () => boolean;
+	isAuthorized: (placementKey?: TestCampaignPlacement) => boolean;
 }>;
-type TestRuntimeValue = Omit<TestRuntimeSession, "isAuthorized">;
+type TestPlacementAuthority = Readonly<{ received: TestClock; validForMs: number }>;
+type TestRuntimeValue = Omit<TestRuntimeSession, "isAuthorized"> & Readonly<{
+	authorizations: ReadonlyMap<TestCampaignPlacement, TestPlacementAuthority>;
+}>;
 
 let currentTestSession: TestRuntimeSession | null = null;
 const testRuntimeListeners = new Set<() => void>();
@@ -184,13 +185,6 @@ class TestPlacementTimeoutError extends Error {
  */
 export const TEST_PLACEMENT_REQUEST_TIMEOUT_MS = 10_000;
 
-/**
- * The least authority a slow placement's previous answer must still hold to
- * be presented again: enough to reach the next poll and survive that round's
- * whole budget, so it never shortens the lease of the siblings shown with it.
- */
-const TEST_HELD_PLACEMENT_MIN_MS = TOUCHPOINT_POLL_MS + REQUEST_TIMEOUT_MS;
-
 /** One placement answer that passed every selection and schedule check. */
 type LoadedTestPlacement = Readonly<{
 	placementKey: TestCampaignPlacement;
@@ -199,6 +193,7 @@ type LoadedTestPlacement = Readonly<{
 	endsAt: number;
 	serverTime: number;
 	validForMs: number;
+	received: TestClock;
 }>;
 
 /** Elapsed time measured on both clocks, as the lifecycle measures its leases. */
@@ -724,7 +719,7 @@ export function TestTouchpointMount({
 		const authorized = () =>
 			active &&
 			isAuthorized() &&
-			currentTestSession?.isAuthorized() === true &&
+			currentTestSession?.isAuthorized(placementKey) === true &&
 			currentTestSession.decisions.get(placementKey) === decision;
 		const dispose = mountTouchpoint(container, {
 			content: decision.content,
@@ -883,7 +878,7 @@ export function TestCampaignModal({
 		 */
 		const lastAuthorized = new Map<
 			TestCampaignPlacement,
-			{ context: TestContext; item: LoadedTestPlacement; received: TestClock }
+			{ context: TestContext; item: LoadedTestPlacement }
 		>();
 		/** Resolves `null` for a context response this selection cannot use. */
 		const fetchContext = async (signal: AbortSignal): Promise<TestContext | null> => {
@@ -933,6 +928,7 @@ export function TestCampaignModal({
 			signal: AbortSignal,
 			active: TestRuntimeValue | null,
 		): Promise<TouchpointLifecycleLoad<TestRuntimeValue>> => {
+			const started = testClock();
 			const current = () => !signal.aborted;
 			if (!placements.length) return { kind: "clear" };
 			// A held context must not add a turn before the placement requests start.
@@ -1015,7 +1011,9 @@ export function TestCampaignModal({
 							response.status,
 						);
 					const decision = (await response.json()) as TestDecision;
-					if (!current()) return null;
+					// Siblings may take their whole budget; that wait grants no extra authority.
+					const received = testClock();
+					if (!current() || requestSignal.aborted) return null;
 					if (
 						!decision ||
 						!decisionMatchesSelection(
@@ -1083,6 +1081,7 @@ export function TestCampaignModal({
 							endsAt,
 							serverTime,
 							validForMs: 0,
+							received,
 						};
 					const deadline = resolveAuthorizationDeadline(decision, TEST_MAX_AUTHORIZATION_MS);
 					if (deadline === null) throw new Error("realtime_test_runtime_required");
@@ -1093,6 +1092,7 @@ export function TestCampaignModal({
 						endsAt,
 						serverTime,
 						validForMs: deadline - serverTime,
+						received,
 					};
 			};
 			let settled = await loadPlacements(selectedContext);
@@ -1126,7 +1126,6 @@ export function TestCampaignModal({
 						lastAuthorized.set(placementKey, {
 							context: selectedContext,
 							item: result.value,
-							received: testClock(),
 						});
 					return result;
 				}
@@ -1138,14 +1137,12 @@ export function TestCampaignModal({
 				const previous = lastAuthorized.get(placementKey);
 				if (!previous || previous.context !== selectedContext) return result;
 				const remaining =
-					previous.item.validForMs - testElapsed(previous.received);
-				// An answer that cannot outlast the next renewal round would cap the
-				// healthy siblings' lease below that round and blank them with it,
-				// so it is dropped now, earlier than its authority, never later.
-				if (remaining < TEST_HELD_PLACEMENT_MIN_MS) return result;
+					previous.item.validForMs - testElapsed(previous.item.received);
+				// Each placement expires independently; a short hold cannot cap its siblings.
+				if (remaining <= 0) return result;
 				return {
 					status: "fulfilled",
-					value: { ...previous.item, validForMs: remaining },
+					value: previous.item,
 				};
 			});
 			const loaded = isolateTestPresentationFailures(placements, settled);
@@ -1202,27 +1199,24 @@ export function TestCampaignModal({
 						...decisions.map((item) => item.startsAt - item.serverTime),
 					),
 				};
-			const validForMs = Math.min(...decisions.map((item) => item.validForMs));
-			if (validForMs <= 0) return { kind: "clear" };
-			// A refreshed context is a new authorization generation: publish its
-			// decisions under a new lease key instead of renewing the stale session.
-			// So is a change in which presentations are healthy: a recovered one
-			// must be published, a failed one must disappear.
-			const presented = decisions.map((item) => item.placementKey);
-			const session =
-				active?.selectionKey === selectionKey &&
-				active.context === selectedContext &&
-				active.decisions.size === presented.length &&
-				presented.every((placementKey) => active.decisions.has(placementKey))
-					? active
-					: Object.freeze<TestRuntimeValue>({
-							selectionKey,
-							deployment: selected,
-							context: selectedContext,
-							decisions: new Map(
-								decisions.map((item) => [item.placementKey, item.decision]),
-							),
-						});
+			const remaining = (item: LoadedTestPlacement) => item.validForMs - testElapsed(item.received);
+			const authorized = decisions.filter((item) => remaining(item) > 0);
+			if (!authorized.length) return { kind: "clear" };
+			// The session lasts through its longest grant. Its placements are pruned
+			// separately at their own deadlines, without rebuilding healthy hosts.
+			const sameContext = active?.selectionKey === selectionKey && active.context === selectedContext;
+			const session = Object.freeze<TestRuntimeValue>({
+				selectionKey,
+				deployment: selected,
+				context: selectedContext,
+				decisions: new Map(authorized.map((item) => [
+					item.placementKey,
+					(sameContext && active.decisions.get(item.placementKey)) || item.decision,
+				])),
+				authorizations: new Map(authorized.map((item) => [item.placementKey, {
+					received: item.received, validForMs: item.validForMs,
+				}])),
+			});
 			return {
 				kind: "decision",
 				value: session,
@@ -1230,9 +1224,10 @@ export function TestCampaignModal({
 					selectionKey,
 					selectedContext.updatedAt,
 					selectedContext.testerMemberId ?? null,
-					presented,
 				]),
-				validForMs,
+				// The lifecycle measures from load start; placement grants start at receipt.
+				validForMs: Math.max(...authorized.map(remaining)) + testElapsed(started),
+				replaceValue: true,
 			};
 		};
 		return { selectionKey, load };
@@ -1251,15 +1246,46 @@ export function TestCampaignModal({
 		load,
 		onError: (error) => emitWebTouchpointDiagnostic(testLoadDiagnostic(error)),
 	});
-	const runtimeSession = useMemo(
-		() =>
-			lifecycle.current &&
-			Object.freeze<TestRuntimeSession>({
-				...lifecycle.current,
-				isAuthorized: () => lifecycle.isCurrent(lifecycle.generation),
-			}),
-		[lifecycle.current, lifecycle.generation, lifecycle.isCurrent],
-	);
+	const authorityRef = useRef(lifecycle.current);
+	authorityRef.current = lifecycle.current;
+	const expired = useRef(new WeakSet<TestClock>());
+	const [, expirePlacement] = useState(0);
+	const isSessionAuthorized = useCallback((placementKey?: TestCampaignPlacement) => {
+		if (!lifecycle.isCurrent(lifecycle.generation)) return false;
+		if (!placementKey) return true;
+		const grant = authorityRef.current?.authorizations.get(placementKey);
+		return !!grant && !expired.current.has(grant.received) && testElapsed(grant.received) < grant.validForMs;
+	}, [lifecycle.generation, lifecycle.isCurrent]);
+	// A held placement may end between polls, even while another round is in flight.
+	// Retire that grant once; a later clock correction cannot revive it.
+	const live: TestCampaignPlacement[] = [];
+	let nextExpiry = Infinity;
+	for (const placementKey of lifecycle.current?.decisions.keys() ?? []) {
+		const grant = lifecycle.current!.authorizations.get(placementKey)!;
+		const remaining = grant.validForMs - testElapsed(grant.received);
+		if (remaining <= 0) expired.current.add(grant.received);
+		if (!expired.current.has(grant.received)) {
+			live.push(placementKey);
+			nextExpiry = Math.min(nextExpiry, remaining);
+		}
+	}
+	const liveKey = live.join("\n");
+	useEffect(() => {
+		if (!Number.isFinite(nextExpiry)) return;
+		const timer = setTimeout(() => expirePlacement((tick) => tick + 1), nextExpiry);
+		return () => clearTimeout(timer);
+	}, [lifecycle.current, nextExpiry]);
+	// Publish a new session only when the lease or its live placements change.
+	const runtimeSession = useMemo(() => {
+		const current = lifecycle.current;
+		if (!current) return null;
+		const keys = liveKey ? (liveKey.split("\n") as TestCampaignPlacement[]) : [];
+		return Object.freeze<TestRuntimeSession>({
+			...current,
+			decisions: new Map(keys.map((key) => [key, current.decisions.get(key)!])),
+			isAuthorized: isSessionAuthorized,
+		});
+	}, [lifecycle.current, liveKey, isSessionAuthorized]);
 	useEffect(() => {
 		if (!deployment) {
 			publishedSession.current = null;

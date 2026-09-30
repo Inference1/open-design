@@ -433,6 +433,45 @@ describe("OPEND-3298 context recovery and remaining P1", () => {
     expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
   });
 
+  it("holds a poll-driven timeout only to its own deadline without remounting healthy hover siblings", async () => {
+    await start();
+    const mount = vi.mocked(component.OpenDesignTouchpointElement.prototype.mount);
+    const hoverMounts = () => mount.mock.calls.filter(([, , host]) => host.placementKey !== modal).length;
+    const initialMounts = hoverMounts();
+    const originalEntry = latest?.decisions.get(entry);
+    let hanging = true;
+    decisionReply = (key, locale, id) => key === modal && hanging
+      ? new Promise<Response>(() => {}) : Response.json(decision(key, locale, oldGeneration, id));
+    // No focus refresh: the first timeout is discovered by the ordinary poll at t=40s.
+    for (let second = 1; second <= 150; second += 1) {
+      await settle(1_000);
+      expect(visibleEntry(), `hover at t=${second}s`).toBe(true);
+      expect(hoverMounts(), `hover mounts at t=${second}s`).toBe(initialMounts);
+      expect(latest?.decisions.get(entry)).toBe(originalEntry);
+      if (second < 60) expect(screen.queryByRole("dialog", { name: "Test campaign" })).not.toBeNull();
+      if (second >= 60 && second <= 90) {
+        expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+        expect(latest?.decisions.has(modal)).toBe(false);
+      }
+      if (second === 90) hanging = false;
+    }
+    expect(latest?.decisions.has(modal)).toBe(true);
+  });
+
+  it("ages an answer from its own fetch completion while a sibling delays the round", async () => {
+    let hangEntry = false;
+    decisionReply = (key, locale, id) => key === modal || (key === entry && hangEntry)
+      ? new Promise<Response>(() => {}) : Response.json(decision(key, locale, oldGeneration, id));
+    await start();
+    await settle(10_000);
+    expect(visibleEntry()).toBe(true);
+    hangEntry = true;
+    await settle(49_000);
+    expect(latest?.decisions.has(entry)).toBe(true);
+    await settle(1_000);
+    expect(latest?.decisions.has(entry)).toBe(false);
+  });
+
   it("reports actionable mismatch identities instead of a bare diagnostic code", async () => {
     decisionReply = (key, locale, id) => Response.json({ ...decision(key, locale, oldGeneration, id), snapshotHash: "sha256:other" });
     await start();

@@ -452,7 +452,7 @@ describe('production touchpoint offline replay', () => {
   // then breaks off does not turn a 410 back into "unreachable": replaying the
   // stored package over it would bring back exactly the activity the server
   // just withdrew, and replaying over a 401/403/404 would overrule an answer.
-  it.each([401, 403, 404])(
+  it.each([302, 400, 401, 403, 404, 409, 429])(
     'answers %i, not the cache, when the body breaks off after the status',
     async (status) => {
       await decide();
@@ -461,6 +461,7 @@ describe('production touchpoint offline replay', () => {
       expect(cut.status).toBe(status);
       expect(cut.offlineHeader).toBeNull();
       expect(cut.body?.offlineReplay).toBeUndefined();
+      expect(cut.body?.error).toBe('touchpoint_runtime_response_incomplete');
       // An answer that is not a withdrawal is no reason to throw the package away.
       expect(storedRecords()).toHaveLength(1);
     },
@@ -491,6 +492,28 @@ describe('production touchpoint offline replay', () => {
   // The decision budget is the daemon's own deadline, not the runtime's
   // answer. When it runs out on a 410 whose body stalls, the withdrawal
   // already happened and the stored package must not outlive it.
+  it.each([302, 400, 409, 429, 503, 200])('settles a stalled %i body using the received status', async (status) => {
+    await decide();
+    const stalled = new Promise<void>((resolve) => { onStalled = resolve; });
+    reply = { status, body: { error: 'answered' }, stall: true };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const pending = decide();
+    await stalled;
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+    vi.advanceTimersByTime(10_000);
+    const answer = await pending;
+    vi.useRealTimers();
+    if (status === 503 || status === 200) {
+      expect(answer.status).toBe(200);
+      expect(answer.offlineHeader).toBe('1');
+    } else {
+      expect(answer.status).toBe(status);
+      expect(answer.offlineHeader).toBeNull();
+      expect(answer.body?.error).toBe('touchpoint_runtime_response_incomplete');
+    }
+    expect(storedRecords()).toHaveLength(1);
+  });
+
   it('does not replay over a 410 whose body stalls past the decision budget', async () => {
     await decide();
     expect(storedRecords()).toHaveLength(1);

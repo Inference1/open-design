@@ -104,6 +104,27 @@ describe('touchpoint content cache answer ordering', () => {
     expect(records()).toHaveLength(0);
   });
 
+  it.each(['full', 'trimmed'] as const)('adopts a corrected %s answer after a future server clock', (kind) => {
+    const cache = createTouchpointContentCache(dataDir);
+    cache.remember(key, full({ serverTime: 10 * 60_000, endsAt: HOUR }));
+    const held = cache.held(key)!;
+    vi.advanceTimersByTime(30_000);
+    const corrected = { serverTime: 30_000, endsAt: 90_000 };
+    if (kind === 'full') cache.remember(key, full(corrected));
+    else cache.reassemble(key, held, trimmed(corrected));
+    expect(replayAfterRestart()?.endsAt).toBe(iso(90_000));
+    vi.advanceTimersByTime(60_001);
+    expect(replayAfterRestart()).toBeNull();
+    expect(records()).toHaveLength(0);
+  });
+
+  it('still orders answers with a small server clock lead', () => {
+    const cache = createTouchpointContentCache(dataDir);
+    cache.remember(key, full({ serverTime: 2_000, endsAt: 90_000 }));
+    cache.remember(key, full({ serverTime: 0, endsAt: HOUR }));
+    expect(replayAfterRestart()?.endsAt).toBe(iso(90_000));
+  });
+
   it('adopts an answer as new as the stored one, and replaces rather than merges', () => {
     const cache = createTouchpointContentCache(dataDir);
     cache.remember(key, full({ serverTime: 0, endsAt: HOUR }));

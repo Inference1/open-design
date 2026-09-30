@@ -269,6 +269,9 @@ export function ProductionCampaignModal({
 }) {
 	const { locale, t } = useI18n();
 	const testRuntime = useTestRuntime();
+	// A sibling entering or leaving the session must not rebuild this placement.
+	const testRuntimeRef = useRef(testRuntime);
+	testRuntimeRef.current = testRuntime;
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
 	// Test follows the production rule: one automatic presentation per account,
 	// activity and device. Only the presentation already open may continue (its
@@ -658,12 +661,13 @@ export function ProductionCampaignModal({
 	}, [authenticated, testClosed, testDecision, testPresented, closeTestModal]);
 	const onTestVisible = useCallback(
 		(next: TestDecision, placementKey: TestCampaignPlacement) => {
-			if (!testRuntime) return;
+			const runtime = testRuntimeRef.current;
+			if (!runtime) return;
 			if (sessionSubject && next.activityId && placementKey === PLACEMENT)
 				recordDisplayed(sessionSubject, next.activityId);
-			recordVisibleTestTouchpoint(testRuntime, next, placementKey);
+			recordVisibleTestTouchpoint(runtime, next, placementKey);
 		},
-		[sessionSubject, testRuntime],
+		[sessionSubject],
 	);
 	if (authenticated && testRuntime && testDecision && !testClosed) {
 		return (

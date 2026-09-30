@@ -512,13 +512,9 @@ function decodeProxyBody(
  */
 const TOUCHPOINT_DECISION_BUDGET_MS = 10_000;
 
-/**
- * Statuses that are the runtime's answer rather than its absence: a withdrawal
- * (410), a refusal (401, 403), or "nothing for you" (404). A cache may never
- * overrule one, and that stays true when the body behind it never arrives —
- * the status line is where the answer is, the body only elaborates on it.
- */
-const TOUCHPOINT_AUTHORITATIVE_STATUSES: ReadonlySet<number> = new Set([401, 403, 404, 410]);
+/** A received refusal or redirect remains an answer even when its body is incomplete. */
+const touchpointStatusRefusesReplay = (status: number): boolean =>
+  (status < 200 || status >= 300) && (status < 500 || status >= 600);
 
 /** The daemon's own content-assembly parameters, which no browser ever sends. */
 const HELD_CONTENT_PARAMS = ['heldContentId', 'heldContentLocale'] as const;
@@ -734,13 +730,15 @@ function proxyTouchpointRuntimeRequest(
      * unreadable here, and `touchpointWithdrawalReclaims` already rules that
      * an unreadable receipt is the whole deployment being withdrawn. The
      * reclaim does not depend on anyone still listening; the withdrawal
-     * happened either way. Everything else — no response at all, or a 5xx —
-     * keeps the unreachable path it always had.
+     * happened either way. No response or a transient 5xx keeps offline replay.
+     * An incomplete 2xx also keeps replay: its status grants no usable decision
+     * until the whole body can be validated, so the previous complete answer
+     * remains the only display authority the daemon has.
      */
     const settleCutShort = (): void => {
       if (cutShortSettled) return;
       cutShortSettled = true;
-      if (upstreamStatus !== null && TOUCHPOINT_AUTHORITATIVE_STATUSES.has(upstreamStatus)) {
+      if (upstreamStatus !== null && touchpointStatusRefusesReplay(upstreamStatus)) {
         if (upstreamStatus === 410 && contentKey && contentCache)
           contentCache.forgetWithdrawn(contentKey, null);
         if (res.headersSent) res.end();

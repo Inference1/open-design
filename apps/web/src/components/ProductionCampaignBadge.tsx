@@ -61,6 +61,9 @@ export function ProductionCampaignBadge({
 	sessionSubject: string | null;
 }) {
 	const testRuntime = useTestRuntime();
+	// A sibling entering or leaving the session must not rebuild this placement.
+	const testRuntimeRef = useRef(testRuntime);
+	testRuntimeRef.current = testRuntime;
 	const { locale } = useI18n();
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
 	const containerRef = useRef<HTMLDivElement | null>(null);
@@ -222,9 +225,10 @@ export function ProductionCampaignBadge({
 
 	const onTestVisible = useCallback(
 		(next: TestDecision, placementKey: TestCampaignPlacement) => {
-			if (testRuntime) recordVisibleTestTouchpoint(testRuntime, next, placementKey);
+			const runtime = testRuntimeRef.current;
+			if (runtime) recordVisibleTestTouchpoint(runtime, next, placementKey);
 		},
-		[testRuntime],
+		[],
 	);
 	if (authenticated && testRuntime && testDecision) {
 		return (

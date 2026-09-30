@@ -772,7 +772,8 @@ describe("Test campaign decision and lifecycle guards", () => {
 			cancelable: true,
 		});
 		trapWebTouchpointModalFocus(forward, modal);
-		expect(forward.defaultPrevented).toBe(false);
+		expect(forward.defaultPrevented).toBe(true);
+		expect(shadow.activeElement).toBe(action);
 		action.focus();
 		const wrapForward = new KeyboardEvent("keydown", {
 			key: "Tab",
@@ -792,6 +793,32 @@ describe("Test campaign decision and lifecycle guards", () => {
 		trapWebTouchpointModalFocus(wrapReverse, modal);
 		expect(wrapReverse.defaultPrevented).toBe(true);
 		expect(shadow.activeElement).toBe(action);
+		modal.remove();
+	});
+	it("wraps Tab past controls that refuse focus in either direction", async () => {
+		const { trapWebTouchpointModalFocus } = await import("../../src/components/touchpoint-component");
+		const modal = document.createElement("div");
+		modal.tabIndex = -1;
+		const refusingFirst = document.createElement("button");
+		const first = document.createElement("button");
+		const last = document.createElement("button");
+		const refusingLast = document.createElement("button");
+		refusingFirst.focus = refusingLast.focus = () => {};
+		modal.append(refusingFirst, first, last, refusingLast);
+		document.body.append(modal);
+		last.focus();
+		const forward = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+		trapWebTouchpointModalFocus(forward, modal);
+		expect(forward.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(first);
+		const reverse = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, cancelable: true });
+		trapWebTouchpointModalFocus(reverse, modal);
+		expect(reverse.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(last);
+		first.remove();
+		last.remove();
+		trapWebTouchpointModalFocus(reverse, modal);
+		expect(document.activeElement).toBe(modal);
 		modal.remove();
 	});
 	it("never consumes a Test static target without an approved server event contract", async () => {

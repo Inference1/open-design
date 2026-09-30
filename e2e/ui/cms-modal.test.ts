@@ -287,7 +287,36 @@ test("[P1] production modal leaves no dialog or backdrop behind when the mounted
 }) => {
 	await page.addInitScript(() => {
 		const seen: string[] = [];
-		(window as unknown as { __touchpointDiagnostics: string[] }).__touchpointDiagnostics = seen;
+		const witness = window as unknown as {
+			__touchpointDiagnostics: string[];
+			__touchpointDialogAppeared: boolean;
+		};
+		witness.__touchpointDiagnostics = seen;
+		witness.__touchpointDialogAppeared = false;
+		const selector = '[role="dialog"][aria-label="Campaign"], [aria-modal="true"]';
+		const record = (node: Node) => {
+			if (!(node instanceof Element)) return;
+			const dialogs = [...node.querySelectorAll(selector)];
+			if (node.matches(selector)) dialogs.push(node);
+			if (dialogs.length) witness.__touchpointDialogAppeared = true;
+		};
+		// Added nodes remain in mutation records even if React removes them before
+		// the observer runs. Attribute old values also expose same-turn flashes.
+		new MutationObserver((mutations) => {
+			for (const mutation of mutations) {
+				for (const node of mutation.addedNodes) record(node);
+				record(mutation.target);
+				if (mutation.type !== "attributes" || !(mutation.target instanceof Element)) continue;
+				const target = mutation.target;
+				const campaignLabel = target.getAttribute("aria-label") === "Campaign" || mutations.some(
+					(change) => change.target === target && change.attributeName === "aria-label" && change.oldValue === "Campaign",
+				);
+				if (
+					(mutation.attributeName === "role" && mutation.oldValue === "dialog" && campaignLabel) ||
+					(mutation.attributeName === "aria-modal" && mutation.oldValue === "true")
+				) witness.__touchpointDialogAppeared = true;
+			}
+		}).observe(document, { childList: true, subtree: true, attributes: true, attributeOldValue: true });
 		document.addEventListener("touchpointdiagnostic", (event) => {
 			const code = (event as CustomEvent<{ code?: string }>).detail?.code;
 			if (code) seen.push(code);
@@ -313,6 +342,10 @@ test("[P1] production modal leaves no dialog or backdrop behind when the mounted
 	await expect(page.getByRole("dialog", { name: "Campaign" })).toHaveCount(0);
 	await expect(page.locator('[aria-modal="true"]')).toHaveCount(0);
 	await expect(page.locator("body")).not.toHaveCSS("overflow", "hidden");
+	const everAppeared = await page.evaluate(() =>
+		(window as unknown as { __touchpointDialogAppeared: boolean }).__touchpointDialogAppeared,
+	);
+	expect(everAppeared).toBe(false);
 });
 
 for (const mode of ["hidden", "disabled"] as const) {
