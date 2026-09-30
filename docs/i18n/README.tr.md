@@ -1,6 +1,6 @@
 <h1 align="center">OpenDesign: ilk iş birliğine dayalı tasarım ajanı çalışma alanı</h1>
 
-> ✨ **[Design Plan ile tanışın: herkes için uygun fiyatlı modeller.](https://open-design.ai/pricing/)** Go planı ilk ay 8 ABD dolarından başlar ve aşağıdakiler dahil 10'dan fazla model için aylık kredi sunar: GPT-6.1 Sol, GPT-6 Luna, DeepSeek V4.1 Flash, GLM-5.3 Flash-X ve MiMo V2.6 Flash. Tüm bireysel planlar Codex, Claude Code, DSH, OpenCode ve diğer araçlar için API erişimi içerir.
+> ✨ **[OpenDesign Go ile tanışın](https://open-design.ai/pricing/)**. Go Plan ilk ay 8 ABD dolarından başlar ve aşağıdakiler dahil 10'dan fazla model için aylık kredi sunar: GPT-6.1 Sol, GPT-6 Luna, DeepSeek V4.1 Flash, GLM-5.3 Flash-X ve MiMo V2.6 Flash. Tüm bireysel planlar Codex, Claude Code, DSH, OpenCode ve diğer araçlar için API erişimi içerir.
 >
 > 🧩 **[DeepSeek Harness artık destekleniyor.](https://open-design.ai/zh/agents/deepseek-harness-design/)** DeepSeek'in resmî `dsh` Agent Harness'ini yapılandırılmış düşünme, araç çağrıları, model keşfi, iptal ve oturum devam ettirme özellikleriyle OpenDesign'a yerel bir runtime olarak bağlayın. Üretilen dosyalar canlı önizleme ve teslimat için OpenDesign iş akışında kalır.
 

@@ -2,7 +2,7 @@
 
 <h1 align="center">OpenDesign: أول مساحة عمل تعاونية لوكلاء التصميم</h1>
 
-> ✨ **[نقدّم Design Plan: نماذج بأسعار تناسب الجميع.](https://open-design.ai/pricing/)** تبدأ خطة Go من 8 دولارات في الشهر الأول، مع رصيد شهري لأكثر من 10 نماذج، منها GPT-6.1 Sol وGPT-6 Luna وDeepSeek V4.1 Flash وGLM-5.3 Flash-X وMiMo V2.6 Flash. تشمل جميع الخطط الفردية الوصول إلى واجهة API لاستخدامها مع Codex وClaude Code وDSH وOpenCode وغيرها.
+> ✨ **[نقدّم OpenDesign Go](https://open-design.ai/pricing/)**. تبدأ خطة Go Plan من 8 دولارات في الشهر الأول، مع رصيد شهري لأكثر من 10 نماذج، منها GPT-6.1 Sol وGPT-6 Luna وDeepSeek V4.1 Flash وGLM-5.3 Flash-X وMiMo V2.6 Flash. تشمل جميع الخطط الفردية الوصول إلى واجهة API لاستخدامها مع Codex وClaude Code وDSH وOpenCode وغيرها.
 >
 > 🧩 **[أصبح DeepSeek Harness مدعومًا الآن.](https://open-design.ai/zh/agents/deepseek-harness-design/)** صِل Agent Harness الرسمي `dsh` من DeepSeek بـ OpenDesign كبيئة تشغيل أصلية، مع التفكير المنظم واستدعاءات الأدوات واكتشاف النماذج والإلغاء واستئناف الجلسات. تبقى الملفات الناتجة ضمن سير عمل OpenDesign للمعاينة الحية والتسليم.
 

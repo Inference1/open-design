@@ -1,6 +1,6 @@
 <h1 align="center">OpenDesign：首個協作式設計 Agent 工作區</h1>
 
-> ✨ **[全新推出 Design Plan：讓每個人都用得起好模型。](https://open-design.ai/pricing/)** Go 方案首月 8 美元起，每月提供可用於 10 多款模型的額度，包括 GPT-6.1 Sol、GPT-6 Luna、DeepSeek V4.1 Flash、GLM-5.3 Flash-X 與 MiMo V2.6 Flash. 所有個人方案均提供 API 存取，可用於 Codex、Claude Code、DSH、OpenCode 等工具。
+> ✨ **[全新推出 OpenDesign Go](https://open-design.ai/pricing/)**。Go Plan 方案首月 8 美元起，每月提供可用於 10 多款模型的額度，包括 GPT-6.1 Sol、GPT-6 Luna、DeepSeek V4.1 Flash、GLM-5.3 Flash-X 與 MiMo V2.6 Flash. 所有個人方案均提供 API 存取，可用於 Codex、Claude Code、DSH、OpenCode 等工具。
 >
 > 🧩 **[現已支援 DeepSeek Harness。](https://open-design.ai/zh/agents/deepseek-harness-design/)** 將 DeepSeek 官方 `dsh` Agent Harness 作為原生執行環境接入 OpenDesign，支援結構化思考、工具呼叫、模型探索、取消與工作階段恢復；生成檔案仍留在 OpenDesign 工作流程中供即時預覽與交付。
 

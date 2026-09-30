@@ -1,6 +1,6 @@
 <h1 align="center">OpenDesign: o primeiro espaço de trabalho colaborativo com agentes de design</h1>
 
-> ✨ **[Apresentamos o Design Plan: modelos acessíveis para todos.](https://open-design.ai/pricing/)** O Go começa em US$ 8 no primeiro mês e inclui créditos mensais para mais de 10 modelos, entre eles GPT-6.1 Sol, GPT-6 Luna, DeepSeek V4.1 Flash, GLM-5.3 Flash-X e MiMo V2.6 Flash. Todos os planos pessoais incluem acesso à API para Codex, Claude Code, DSH, OpenCode e outros.
+> ✨ **[Apresentamos o OpenDesign Go](https://open-design.ai/pricing/)**. O Go Plan começa em US$ 8 no primeiro mês e inclui créditos mensais para mais de 10 modelos, entre eles GPT-6.1 Sol, GPT-6 Luna, DeepSeek V4.1 Flash, GLM-5.3 Flash-X e MiMo V2.6 Flash. Todos os planos pessoais incluem acesso à API para Codex, Claude Code, DSH, OpenCode e outros.
 >
 > 🧩 **[DeepSeek Harness agora é compatível.](https://open-design.ai/zh/agents/deepseek-harness-design/)** Conecte o Agent Harness oficial `dsh` da DeepSeek ao OpenDesign como runtime nativo, com raciocínio estruturado, chamadas de ferramentas, descoberta de modelos, cancelamento e retomada de sessão. Os arquivos gerados permanecem no fluxo do OpenDesign para visualização ao vivo e entrega.
 
