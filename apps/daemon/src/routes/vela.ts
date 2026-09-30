@@ -754,6 +754,9 @@ function proxyTouchpointRuntimeRequest(
         res.status(502).json({ error: 'touchpoint_runtime_unavailable' });
     };
     const transport = attempt.protocol === 'https:' ? https : http;
+    // Server time is captured before awaited reads; download time consumes its window.
+    const requestStarted = performance.now();
+    const requestElapsed = () => Math.max(0, performance.now() - requestStarted);
     const upstream = transport.request(attempt, { method: req.method, headers }, (upstreamRes) => {
       upstreamStatus = upstreamRes.statusCode ?? null;
       const passThrough = () => {
@@ -923,7 +926,7 @@ function proxyTouchpointRuntimeRequest(
         }
         const decision = parsed as Record<string, unknown>;
         if (decision.contentOmitted !== true) {
-          contentCache.remember(contentKey, decision, ticket);
+          contentCache.remember(contentKey, decision, ticket, requestElapsed());
           res.status(200);
           res.setHeader('content-type', upstreamRes.headers['content-type'] ?? 'application/json');
           res.end(decoded);
@@ -934,7 +937,7 @@ function proxyTouchpointRuntimeRequest(
         // non-null by construction; rebuilding without it would rebuild from
         // whatever the record says NOW, which a concurrent full response for
         // the same placement may already have replaced.
-        const full = held ? contentCache.reassemble(contentKey, held, decision, ticket) : null;
+        const full = held ? contentCache.reassemble(contentKey, held, decision, ticket, requestElapsed()) : null;
         if (full) {
           res.status(200);
           res.setHeader('content-type', 'application/json');

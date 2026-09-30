@@ -81,14 +81,17 @@ export interface TouchpointContentCache {
     held: HeldContentRef,
     trimmed: Record<string, unknown>,
     ticket?: number,
+    requestElapsedMs?: number,
   ): Record<string, unknown> | null;
   /**
    * Record the content of a full response for later reassembly. Never throws.
    *
    * `ticket` is what {@link ticket} returned when the request that produced
    * `response` was sent; see there for why an answer must carry one.
+   * `requestElapsedMs` measures from request start through body decoding with a
+   * monotonic clock. It consumes schedule authority on full and trimmed replies.
    */
-  remember(key: TouchpointContentKey, response: unknown, ticket?: number): void;
+  remember(key: TouchpointContentKey, response: unknown, ticket?: number, requestElapsedMs?: number): void;
   /**
    * Stamp a request for this placement as it is sent, so the answer can later
    * be told apart from one that a 410 has since overtaken.
@@ -143,8 +146,9 @@ export const MAX_CONTENT_BYTES = 2 * 1024 * 1024;
 
 type CachedResource = Readonly<{ path: string; digest: string }>;
 /**
- * When the decision was fetched, and the furthest forward this record has ever
- * been read.
+ * The local request-start anchor (`fetchedAt`), and the furthest forward this
+ * record has ever been observed. Request/body latency is already consumed when
+ * a fresh record is written.
  *
  * `observedAt` is a high-water mark and only ever increases. It is the half of
  * the elapsed measurement that survives a restart: an in-process monotonic
@@ -543,13 +547,13 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     timer.unref?.();
     expiryTimers.set(file, timer);
   };
-  /** Arms expiry for a record just written from a fresh answer, whose effective time is its own `serverTime`. */
-  const armExpiryForFresh = (file: string, schedule: TouchpointSchedule | null): void => {
+  /** Arms expiry after consuming the request time of a fresh answer. */
+  const armExpiryForFresh = (file: string, schedule: TouchpointSchedule | null, elapsed: number): void => {
     if (!schedule) {
       disarmExpiry(file);
       return;
     }
-    armExpiry(file, schedule, Date.parse(schedule.serverTime));
+    armExpiry(file, schedule, Date.parse(schedule.serverTime) + elapsed);
   };
 
   /**
@@ -644,11 +648,9 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     const stored = held ?? readAssembly(key);
     if (!stored) return false;
     const storedAt = statedServerTimeOf(stored);
-    // A future server clock must not fence corrected answers (including early
-    // ends) for the rest of the activity. Allow a small ordinary clock lead,
-    // measured against that record's receive time rather than its aged clock.
-    const ORDERING_CLOCK_SKEW_MS = 5_000;
-    if (storedAt > stored.clock.fetchedAt + ORDERING_CLOCK_SKEW_MS) return false;
+    // A device clock offset cannot distinguish a corrupt future server clock
+    // from a valid newer answer. Prefer server ordering: even a clock correction
+    // must reach the stored server timestamp before replacing its authority.
     return Number.isFinite(storedAt) && answeredAt < storedAt;
   };
 
@@ -705,11 +707,12 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
       return { heldContentId: record.contentId, heldContentLocale: record.locale };
     },
 
-    reassemble(key, held, trimmed, ticket) {
+    reassemble(key, held, trimmed, ticket, requestElapsedMs = 0) {
+      const clock = responseClock(requestElapsedMs);
       const record = readAssembly(key);
       if (!record || !recordStillHolds(record, held)) return null;
       const full = rebuild(key, record, trimmed);
-      if (full && !overtakenByWithdrawal(key, ticket)) adoptRenewal(key, record, full, trimmed);
+      if (full && !overtakenByWithdrawal(key, ticket)) adoptRenewal(key, record, full, trimmed, clock);
       return full;
     },
 
@@ -747,8 +750,9 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
       return true;
     },
 
-    remember(key, response, ticket) {
+    remember(key, response, ticket, requestElapsedMs = 0) {
       try {
+        const clock = responseClock(requestElapsedMs);
         if (overtakenByWithdrawal(key, ticket)) return;
         if (!isRecord(response)) return;
         const content = response.content;
@@ -816,7 +820,6 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
           if (!storeBlob(blob.dir, blob.digest, blob.data)) return;
         }
         const envelope = envelopeOf(response);
-        const fetchedAt = nowEstimate();
         const record: AssemblyRecord = {
           version: ASSEMBLY_VERSION,
           scope: key.scope,
@@ -847,7 +850,7 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
           // prefers. Opposite directions, on purpose.
           schedule: touchpointScheduleOf(response),
           identity,
-          clock: { fetchedAt, observedAt: fetchedAt },
+          clock,
           envelope,
         };
         writeFresh(key, record);
@@ -857,16 +860,20 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     },
   };
 
-  /**
-   * Writes a record that holds a fresh server answer, and everything a fresh
-   * answer resets: the elapsed-time baseline (including after an uncertain
-   * restart or a corrected device clock) and the expiry timer.
-   */
+  /** Capture the request anchor before synchronous content verification/storage. */
+  function responseClock(requestElapsedMs: number): CachedClock {
+    const observedAt = nowEstimate();
+    const elapsed = Number.isFinite(requestElapsedMs) ? Math.max(0, requestElapsedMs) : 0;
+    return { fetchedAt: observedAt - elapsed, observedAt };
+  }
+
+  /** Replace the answer and timer without resetting its request-start anchor. */
   function writeFresh(key: TouchpointContentKey, record: AssemblyRecord): void {
     const file = assemblyFile(key);
-    writeFileAtomically(file, JSON.stringify(record));
-    marks.set(file, { wall: record.clock.fetchedAt, at: performance.now() });
-    armExpiryForFresh(file, record.schedule);
+    const clock = { ...record.clock, observedAt: Math.max(record.clock.observedAt, nowEstimate()) };
+    writeFileAtomically(file, JSON.stringify({ ...record, clock }));
+    marks.set(file, { wall: clock.observedAt, at: performance.now() });
+    armExpiryForFresh(file, record.schedule, Math.max(0, nowEstimate() - clock.fetchedAt));
   }
 
   /**
@@ -884,17 +891,17 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     record: AssemblyRecord,
     full: Record<string, unknown>,
     trimmed: Record<string, unknown>,
+    clock: CachedClock,
   ): void {
     try {
       const identity = touchpointCachedIdentityOf(full);
       if (answerPredatesRevocation(key.scope, identity, trimmed.serverTime)) return;
       if (answerPredatesStored(key, trimmed.serverTime, record)) return;
-      const fetchedAt = nowEstimate();
       writeFresh(key, {
         ...record,
         schedule: touchpointScheduleOf(trimmed),
         identity,
-        clock: { fetchedAt, observedAt: fetchedAt },
+        clock,
         envelope: envelopeOf(trimmed),
       });
     } catch {

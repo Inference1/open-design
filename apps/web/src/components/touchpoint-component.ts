@@ -645,6 +645,7 @@ function composedFocusableElements(root: ParentNode): HTMLElement[] {
 		if (style.display === "none") continue;
 		if (
 			child.matches(FOCUSABLE_SELECTOR) &&
+			child.tabIndex >= 0 &&
 			style.visibility !== "hidden" &&
 			style.visibility !== "collapse"
 		)

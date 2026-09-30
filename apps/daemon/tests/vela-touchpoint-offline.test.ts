@@ -128,6 +128,7 @@ type Reply = Readonly<{
   gzip?: boolean;
   cut?: boolean;
   stall?: boolean;
+  afterHeaders?: () => void;
 }>;
 
 /**
@@ -188,6 +189,13 @@ beforeEach(async () => {
       res.end(gzipSync(Buffer.from(payload, 'utf8')));
       return;
     }
+    if (reply.afterHeaders) {
+      res.flushHeaders();
+      res.write(payload.slice(0, 8));
+      reply.afterHeaders();
+      setImmediate(() => res.end(payload.slice(8)));
+      return;
+    }
     res.end(payload);
   });
   upstreamPort = (await listen(upstream)).port;
@@ -206,6 +214,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   daemon.closeAllConnections();
   await close(daemon);
   // A stalled reply never ends on its own; `close` would wait for it forever.
@@ -241,6 +250,26 @@ const storedRecords = (): string[] => {
 };
 
 describe('production touchpoint offline replay', () => {
+  it.each(['full', 'trimmed'] as const)('does not re-grant a five-second window after a nine-second %s download', async kind => {
+    let elapsed = 0;
+    const realNow = performance.now.bind(performance);
+    vi.spyOn(performance, 'now').mockImplementation(() => realNow() + elapsed);
+    if (kind === 'trimmed') await decide();
+    const answer = decision({ startsIn: -HOUR, endsIn: 5_000 });
+    const { content: _content, ...envelope } = answer;
+    reply = {
+      status: 200,
+      body: kind === 'full' ? answer : { ...envelope, contentOmitted: true },
+      afterHeaders: () => { elapsed += 9_000; },
+    };
+    expect((await decide()).status).toBe(200);
+    await cutTheWire();
+    const offline = await decide();
+    expect(offline.status).toBe(502);
+    expect(offline.offlineHeader).toBeNull();
+    expect(offline.body.error).toBe('touchpoint_runtime_unavailable');
+  });
+
   it('answers a cached activity while the runtime is unreachable', async () => {
     const live = await decide();
     expect(live.status).toBe(200);

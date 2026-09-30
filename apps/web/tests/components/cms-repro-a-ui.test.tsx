@@ -6,10 +6,11 @@ import { I18nProvider, useI18n } from "../../src/i18n";
 import { ProductionCampaignHover } from "../../src/components/ProductionCampaignHover";
 import { ProductionCampaignModal } from "../../src/components/ProductionCampaignModal";
 import {
-  TestCampaignModal, clearTestRuntimeSession, setTestRuntimeSession, useTestRuntime,
+  TestCampaignModal, clearTestRuntimeSession, setTestRuntimeSession, useTestRuntime, recordVisibleTestTouchpoint,
   type TestContext, type TestDecision, type TestDeployment, type TestRuntimeSession,
 } from "../../src/components/TestCampaignModal";
 import * as component from "../../src/components/touchpoint-component";
+import * as navigation from "../../src/components/touchpoint-navigation";
 
 vi.mock("@open-design/host", () => ({
   OPEN_DESIGN_HOST_VERSION: 2,
@@ -553,5 +554,91 @@ describe("OPEND-3311 return-home timing", () => {
     await settle(32);
     expect(visibleEntry()).toBe(false);
     expect(latest).toBeNull();
+  });
+});
+
+
+describe("adversarial Test placement authority", () => {
+  it.each([9_000, 100])("charges %sms of body download against a five-second grant", async delay => {
+    const grantedAt = Date.now();
+    const mount = vi.mocked(component.OpenDesignTouchpointElement.prototype.mount);
+    decisionReply = (key, locale, id) => {
+      const answer = { ...decision(key, locale, oldGeneration, id),
+        serverTime: new Date(grantedAt).toISOString(),
+        authorizationExpiresAt: new Date(grantedAt + 5_000).toISOString(),
+      };
+      const response = Response.json(answer);
+      vi.spyOn(response, "json").mockImplementation(() => new Promise(resolve => {
+        setTimeout(() => resolve(answer), delay);
+      }));
+      return response;
+    };
+    await start();
+    expect(mount).not.toHaveBeenCalled();
+    await settle(delay);
+    if (delay > 5_000) {
+      expect(latest?.decisions.size ?? 0).toBe(0);
+      expect(mount).not.toHaveBeenCalled();
+      expect(visibleEntry()).toBe(false);
+      expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+    } else {
+      expect(latest?.decisions.size).toBe(3);
+      expect(visibleEntry()).toBe(true);
+      expect(screen.queryByRole("dialog", { name: "Test campaign" })).not.toBeNull();
+      // Do not run the expiry/pruning timers: authorization must read the clock itself.
+      vi.setSystemTime(grantedAt + 4_999);
+      expect(latest?.isAuthorized(modal)).toBe(true);
+      vi.setSystemTime(grantedAt + 5_000);
+      expect(latest?.isAuthorized(modal)).toBe(false);
+    }
+  });
+
+  it("denies a still-mounted expired layer CTA while its sibling grant is live", async () => {
+    const target = { kind: "https" as const, url: "https://example.com" };
+    const actions = [{ id: "plan", target }];
+    let dispatchAction!: (id: string) => Promise<void>;
+    vi.mocked(component.OpenDesignTouchpointElement.prototype.mount).mockImplementation(async function (this: component.OpenDesignTouchpointElement, _url, _digest, host, _resources, _actions, options) {
+      this.shadowRoot?.replaceChildren(document.createTextNode(host.placementKey));
+      if (host.placementKey === layer) {
+        dispatchAction = options!.dispatchAction!;
+        const cta = document.createElement("button");
+        cta.onclick = () => { void dispatchAction("plan").catch(() => {}); };
+        this.shadowRoot?.append(cta);
+      }
+    });
+    const navigate = vi.spyOn(navigation, "navigateCampaignTarget").mockResolvedValue(true);
+    vi.stubGlobal("navigator", new Proxy(navigator, { get: (value, property) => property === "userActivation" ? { isActive: true, hasBeenActive: true } : Reflect.get(value, property, value) }));
+    const grantedAt = Date.now();
+    decisionReply = (key, locale, id) => {
+      const answer = decision(key, locale, oldGeneration, id);
+      return Response.json({ ...answer,
+        authorizationExpiresAt: new Date(grantedAt + (key === layer ? 5_000 : 60_000)).toISOString(),
+        staticActions: actions,
+        content: { ...answer.content, manifest: { ...manifest,
+          placements: manifest.placements.map(value => ({ ...value, staticActions: actions })),
+        } },
+      });
+    };
+    await start();
+    fireEvent.pointerEnter(hoverEntry()!);
+    await settle(32);
+    const layerHost = Array.from(document.querySelectorAll("opend-touchpoint")).find(host => host.shadowRoot?.querySelector("button"));
+    expect(layerHost).toBeDefined();
+    const session = latest!;
+    const layerDecision = session.decisions.get(layer)!;
+    expect(session.isAuthorized(layer)).toBe(true);
+    // Jump wall time without firing any timers; the expired host is still connected.
+    vi.setSystemTime(grantedAt + 6_000);
+    expect(layerHost!.isConnected).toBe(true);
+    expect(session.isAuthorized()).toBe(true);
+    expect(session.isAuthorized(layer)).toBe(false);
+    await act(async () => { fireEvent.click(layerHost!.shadowRoot!.querySelector("button")!); });
+    expect(navigate).not.toHaveBeenCalled();
+    // A fresh visibility notification also cannot accept an expired placement.
+    const acceptances = requests("/acceptances").length;
+    clearTestRuntimeSession();
+    setTestRuntimeSession(session);
+    recordVisibleTestTouchpoint(session, layerDecision, layer);
+    expect(requests("/acceptances")).toHaveLength(acceptances);
   });
 });

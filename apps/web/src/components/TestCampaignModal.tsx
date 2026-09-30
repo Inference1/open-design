@@ -322,7 +322,7 @@ export async function dispatchTestCampaignAction(
 	if (
 		session &&
 		placement &&
-		session.isAuthorized() &&
+		session.isAuthorized(placement) &&
 		session.decisions.get(placement) === decision &&
 		decision.testContext.scheduleState === "active" &&
 		decisionMatchesSelection(
@@ -497,7 +497,7 @@ export function recordVisibleTestTouchpoint(
 ): void {
 	if (
 		currentTestSession !== session ||
-		!session.isAuthorized() ||
+		!session.isAuthorized(placementKey) ||
 		session.decisions.get(placementKey) !== decision ||
 		session.context.scenario !== "realtime" ||
 		decision.testContext.scheduleState !== "active"
@@ -522,7 +522,7 @@ export function recordVisibleTestTouchpoint(
 			acceptanceState.get(key) === delivery &&
 			!delivery.controller.signal.aborted &&
 			current?.selectionKey === session.selectionKey &&
-			current.isAuthorized() &&
+			current.isAuthorized(placementKey) &&
 			current.context.testerMemberId === session.context.testerMemberId &&
 			current.context.scenario === "realtime" &&
 			current.deployment.id === session.deployment.id &&
@@ -1000,6 +1000,8 @@ export function TestCampaignModal({
 						placementKey,
 						locale,
 					});
+					// Server time precedes its awaited reads; request and body latency consume the grant.
+					const received = testClock();
 					const response = await fetch("/api/touchpoints/test-runtime?" + query, {
 						cache: "no-store",
 						signal: requestSignal,
@@ -1011,8 +1013,6 @@ export function TestCampaignModal({
 							response.status,
 						);
 					const decision = (await response.json()) as TestDecision;
-					// Siblings may take their whole budget; that wait grants no extra authority.
-					const received = testClock();
 					if (!current() || requestSignal.aborted) return null;
 					if (
 						!decision ||
@@ -1225,7 +1225,7 @@ export function TestCampaignModal({
 					selectedContext.updatedAt,
 					selectedContext.testerMemberId ?? null,
 				]),
-				// The lifecycle measures from load start; placement grants start at receipt.
+				// Convert the remaining placement grants to the lifecycle's load-start baseline.
 				validForMs: Math.max(...authorized.map(remaining)) + testElapsed(started),
 				replaceValue: true,
 			};

@@ -104,7 +104,38 @@ describe('touchpoint content cache answer ordering', () => {
     expect(records()).toHaveLength(0);
   });
 
-  it.each(['full', 'trimmed'] as const)('adopts a corrected %s answer after a future server clock', (kind) => {
+  it.each(['full', 'trimmed'] as const)('orders %s answers when the device is sixty seconds behind the server', (kind) => {
+    vi.setSystemTime(T0 - 60_000);
+    const cache = createTouchpointContentCache(dataDir);
+    cache.remember(key, full({ serverTime: 0, endsAt: HOUR }));
+    const held = cache.held(key)!;
+    vi.advanceTimersByTime(30_000);
+    const newer = { serverTime: 30_000, endsAt: 90_000 };
+    const older = { serverTime: 20_000, endsAt: HOUR };
+    if (kind === 'full') {
+      cache.remember(key, full(newer));
+      cache.remember(key, full(older));
+    } else {
+      cache.reassemble(key, held, trimmed(newer));
+      cache.reassemble(key, held, trimmed(older));
+    }
+    expect(replayAfterRestart()?.endsAt).toBe(iso(90_000));
+    vi.advanceTimersByTime(60_001);
+    expect(replayAfterRestart()).toBeNull();
+  });
+
+  it.each(['full', 'trimmed'] as const)('consumes a nine-second %s request before caching a five-second window', (kind) => {
+    const cache = createTouchpointContentCache(dataDir);
+    if (kind === 'trimmed') cache.remember(key, full({ serverTime: 0, endsAt: HOUR }));
+    const held = kind === 'trimmed' ? cache.held(key)! : null;
+    vi.advanceTimersByTime(9_000);
+    if (kind === 'full') cache.remember(key, full({ serverTime: 0, endsAt: 5_000 }), undefined, 9_000);
+    else cache.reassemble(key, held!, trimmed({ serverTime: 0, endsAt: 5_000 }), undefined, 9_000);
+    expect(cache.replayOffline(key, 'upstream_unreachable')).toBeNull();
+    expect(replayAfterRestart()).toBeNull();
+  });
+
+  it.each(['full', 'trimmed'] as const)('requires monotonic server time for a %s correction after a future server clock', (kind) => {
     const cache = createTouchpointContentCache(dataDir);
     cache.remember(key, full({ serverTime: 10 * 60_000, endsAt: HOUR }));
     const held = cache.held(key)!;
@@ -112,7 +143,12 @@ describe('touchpoint content cache answer ordering', () => {
     const corrected = { serverTime: 30_000, endsAt: 90_000 };
     if (kind === 'full') cache.remember(key, full(corrected));
     else cache.reassemble(key, held, trimmed(corrected));
-    expect(replayAfterRestart()?.endsAt).toBe(iso(90_000));
+    // A local device offset cannot prove the previous server timestamp corrupt.
+    expect(replayAfterRestart()?.endsAt).toBe(iso(HOUR));
+    const monotonic = { serverTime: 10 * 60_000 + 1, endsAt: 11 * 60_000 };
+    if (kind === 'full') cache.remember(key, full(monotonic));
+    else cache.reassemble(key, held, trimmed(monotonic));
+    expect(replayAfterRestart()?.endsAt).toBe(iso(monotonic.endsAt));
     vi.advanceTimersByTime(60_001);
     expect(replayAfterRestart()).toBeNull();
     expect(records()).toHaveLength(0);
