@@ -24,7 +24,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfigPrefs } from '../src/app-config.js';
 import { registerVelaRoutes } from '../src/routes/vela.js';
@@ -115,7 +115,20 @@ const RECEIPT = {
   touchpointDecisionId: 'decision-1',
 } as const;
 
-type Reply = Readonly<{ status: number; body: unknown; padTo?: number; gzip?: boolean }>;
+/**
+ * `cut` sends the status line and the start of a body, then drops the
+ * connection; `stall` sends the same and then goes silent. Both are a runtime
+ * that has already ANSWERED — the status is on the wire — but whose body the
+ * daemon never gets to read.
+ */
+type Reply = Readonly<{
+  status: number;
+  body: unknown;
+  padTo?: number;
+  gzip?: boolean;
+  cut?: boolean;
+  stall?: boolean;
+}>;
 
 /**
  * The proxy's own buffering ceiling, restated here so a test can stand a body
@@ -131,6 +144,8 @@ let baseUrl: string;
 let env: Record<string, string>;
 let reply: Reply;
 let upstreamCalls: number;
+/** Called once a `stall` reply has put its status and first bytes on the wire. */
+let onStalled: (() => void) | null;
 
 const listen = (server: Server) =>
   new Promise<AddressInfo>((resolve) => {
@@ -147,6 +162,7 @@ const cutTheWire = async () => {
 beforeEach(async () => {
   dataDir = mkdtempSync(path.join(tmpdir(), 'od-touchpoint-offline-http-'));
   upstreamCalls = 0;
+  onStalled = null;
   reply = { status: 200, body: decision() };
   upstream = createServer((_req, res) => {
     upstreamCalls += 1;
@@ -157,6 +173,14 @@ beforeEach(async () => {
     const payload = reply.padTo
       ? JSON.stringify({ ...(reply.body as Record<string, unknown>), pad: 'x'.repeat(reply.padTo) })
       : JSON.stringify(reply.body);
+    if (reply.cut || reply.stall) {
+      res.setHeader('content-length', String(Buffer.byteLength(payload) + 1024));
+      res.flushHeaders();
+      res.write(payload.slice(0, 8));
+      if (reply.cut) setImmediate(() => res.socket?.destroy());
+      else onStalled?.();
+      return;
+    }
     if (reply.gzip) {
       // Small on the wire, oversized once expanded: this crosses the DECODE
       // ceiling without ever crossing the buffering one.
@@ -181,7 +205,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
+  daemon.closeAllConnections();
   await close(daemon);
+  // A stalled reply never ends on its own; `close` would wait for it forever.
+  upstream?.closeAllConnections();
   if (upstream) await close(upstream);
   rmSync(dataDir, { recursive: true, force: true });
 });
@@ -419,5 +447,69 @@ describe('production touchpoint offline replay', () => {
     expect(cold.body).toEqual({ error: 'touchpoint_runtime_unavailable' });
     expect(storedRecords()).toHaveLength(0);
     expect(upstreamCalls).toBe(0);
+  });
+  // A status is the runtime's answer the moment it is on the wire. A body that
+  // then breaks off does not turn a 410 back into "unreachable": replaying the
+  // stored package over it would bring back exactly the activity the server
+  // just withdrew, and replaying over a 401/403/404 would overrule an answer.
+  it.each([401, 403, 404])(
+    'answers %i, not the cache, when the body breaks off after the status',
+    async (status) => {
+      await decide();
+      reply = { status, body: { error: 'answered' }, cut: true };
+      const cut = await decide();
+      expect(cut.status).toBe(status);
+      expect(cut.offlineHeader).toBeNull();
+      expect(cut.body?.offlineReplay).toBeUndefined();
+      // An answer that is not a withdrawal is no reason to throw the package away.
+      expect(storedRecords()).toHaveLength(1);
+    },
+  );
+
+  it('reclaims the package on a 410 whose body breaks off', async () => {
+    await decide();
+    expect(storedRecords()).toHaveLength(1);
+    reply = { status: 410, body: { error: 'production_runtime_withdrawn' }, cut: true };
+    const cut = await decide();
+    expect(cut.status).toBe(410);
+    expect(cut.offlineHeader).toBeNull();
+    expect(storedRecords()).toHaveLength(0);
+
+    await cutTheWire();
+    expect((await decide()).status).toBe(502);
+  });
+
+  it('still replays the cache for a 5xx whose body breaks off', async () => {
+    await decide();
+    reply = { status: 503, body: { error: 'upstream_down' }, cut: true };
+    const cut = await decide();
+    expect(cut.status).toBe(200);
+    expect(cut.offlineHeader).toBe('1');
+    expect(storedRecords()).toHaveLength(1);
+  });
+
+  // The decision budget is the daemon's own deadline, not the runtime's
+  // answer. When it runs out on a 410 whose body stalls, the withdrawal
+  // already happened and the stored package must not outlive it.
+  it('does not replay over a 410 whose body stalls past the decision budget', async () => {
+    await decide();
+    expect(storedRecords()).toHaveLength(1);
+
+    const stalled = new Promise<void>((resolve) => {
+      onStalled = resolve;
+    });
+    reply = { status: 410, body: { error: 'production_runtime_withdrawn' }, stall: true };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const pending = decide();
+    await stalled;
+    // Let the daemon read the status line before the budget runs out: the
+    // status is what this case is about. Real I/O turns, no wall clock.
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+    vi.advanceTimersByTime(10_000);
+    const answer = await pending;
+    vi.useRealTimers();
+    expect(answer.status).toBe(410);
+    expect(answer.offlineHeader).toBeNull();
+    expect(storedRecords()).toHaveLength(0);
   });
 });

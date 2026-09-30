@@ -512,6 +512,14 @@ function decodeProxyBody(
  */
 const TOUCHPOINT_DECISION_BUDGET_MS = 10_000;
 
+/**
+ * Statuses that are the runtime's answer rather than its absence: a withdrawal
+ * (410), a refusal (401, 403), or "nothing for you" (404). A cache may never
+ * overrule one, and that stays true when the body behind it never arrives —
+ * the status line is where the answer is, the body only elaborates on it.
+ */
+const TOUCHPOINT_AUTHORITATIVE_STATUSES: ReadonlySet<number> = new Set([401, 403, 404, 410]);
+
 /** The daemon's own content-assembly parameters, which no browser ever sends. */
 const HELD_CONTENT_PARAMS = ['heldContentId', 'heldContentLocale'] as const;
 
@@ -705,8 +713,51 @@ function proxyTouchpointRuntimeRequest(
           : 'application/json';
       headers['content-length'] = String(body.length);
     }
+    /**
+     * The status this attempt's upstream answered with, once it has answered.
+     *
+     * The decision budget and a broken-off body both surface as errors, and an
+     * error used to read as "the runtime was not reached" whatever had already
+     * arrived. For a 410 that meant replaying the very package the server had
+     * just withdrawn, as a 200, with the offline-replay header on it. Whether
+     * the runtime was reached is decided by the status line, so the failure
+     * handlers ask this instead of assuming.
+     */
+    let upstreamStatus: number | null = null;
+    let cutShortSettled = false;
+    /**
+     * Settles an attempt whose body ended in an error — the decision budget,
+     * a reset socket, a truncated stream — before it could be answered.
+     *
+     * An authoritative status is answered as itself, never from the store. A
+     * 410 also reclaims what the normal `end` path would have: its receipt is
+     * unreadable here, and `touchpointWithdrawalReclaims` already rules that
+     * an unreadable receipt is the whole deployment being withdrawn. The
+     * reclaim does not depend on anyone still listening; the withdrawal
+     * happened either way. Everything else — no response at all, or a 5xx —
+     * keeps the unreachable path it always had.
+     */
+    const settleCutShort = (): void => {
+      if (cutShortSettled) return;
+      cutShortSettled = true;
+      if (upstreamStatus !== null && TOUCHPOINT_AUTHORITATIVE_STATUSES.has(upstreamStatus)) {
+        if (upstreamStatus === 410 && contentKey && contentCache)
+          contentCache.forgetWithdrawn(contentKey, null);
+        if (res.headersSent) res.end();
+        else if (!callerGone && !res.writableEnded)
+          res.status(upstreamStatus).json({ error: 'touchpoint_runtime_response_incomplete' });
+        return;
+      }
+      if (res.headersSent) res.end();
+      // DNS failure, refused connection, reset socket, or this proxy's own
+      // timeout: the runtime was not reached, so the last thing it said is the
+      // best thing the daemon has.
+      else if (!answerFromCache('upstream_unreachable'))
+        res.status(502).json({ error: 'touchpoint_runtime_unavailable' });
+    };
     const transport = attempt.protocol === 'https:' ? https : http;
     const upstream = transport.request(attempt, { method: req.method, headers }, (upstreamRes) => {
+      upstreamStatus = upstreamRes.statusCode ?? null;
       const passThrough = () => {
         res.status(upstreamRes.statusCode ?? 502);
         res.setHeader('content-type', upstreamRes.headers['content-type'] ?? 'application/json');
@@ -790,9 +841,7 @@ function proxyTouchpointRuntimeRequest(
       upstreamRes.on('error', () => {
         if (answered) return;
         failed = true;
-        if (res.headersSent) res.end();
-        else if (!answerFromCache('upstream_unreachable'))
-          res.status(502).json({ error: 'touchpoint_runtime_unavailable' });
+        settleCutShort();
       });
       upstreamRes.on('data', (chunk: Buffer) => {
         if (answered) return;
@@ -905,14 +954,7 @@ function proxyTouchpointRuntimeRequest(
     upstream.setTimeout(30_000, () =>
       upstream.destroy(new Error('Touchpoint runtime request timed out')),
     );
-    upstream.on('error', () => {
-      if (res.headersSent) res.end();
-      // DNS failure, refused connection, reset socket, or this proxy's own
-      // timeout: the runtime was not reached, so the last thing it said is the
-      // best thing the daemon has.
-      else if (!answerFromCache('upstream_unreachable'))
-        res.status(502).json({ error: 'touchpoint_runtime_unavailable' });
-    });
+    upstream.on('error', settleCutShort);
     if (body) upstream.write(body);
     upstream.end();
   };

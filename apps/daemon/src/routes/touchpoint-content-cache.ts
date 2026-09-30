@@ -598,9 +598,12 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
       revocations.delete(oldest);
     }
   };
+  /** The server time a stored record's answer was given at, or NaN when it never said. */
+  const statedServerTimeOf = (record: AssemblyRecord): number =>
+    Date.parse(String(record.schedule?.serverTime ?? record.envelope.serverTime));
   /** The server time a stored record is at now, or +Infinity when it never said. */
   const serverTimeOf = (record: AssemblyRecord): number => {
-    const stated = Date.parse(String(record.schedule?.serverTime ?? record.envelope.serverTime));
+    const stated = statedServerTimeOf(record);
     if (!Number.isFinite(stated)) return Number.POSITIVE_INFINITY;
     return stated + Math.max(0, Math.max(record.clock.observedAt, nowEstimate()) - record.clock.fetchedAt);
   };
@@ -614,6 +617,34 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     if (revokedAt === undefined) return false;
     const answeredAt = Date.parse(String(serverTime));
     return !Number.isFinite(answeredAt) || answeredAt <= revokedAt;
+  };
+
+  /**
+   * Whether an answer is older than the one already stored for its placement.
+   *
+   * Two requests for one placement can be in flight at once, and their answers
+   * need not arrive in the order the server gave them. The record is one
+   * answer, REPLACED wholesale, so an older answer landing last would overwrite
+   * a newer one — and when the newer one ended the activity early, the older
+   * one restores the long `endsAt`, re-arms expiry against it, and offline
+   * replay outlives the real end. The server's own clock orders its answers;
+   * the order they reach the daemon does not.
+   *
+   * Only a strictly older answer is refused: an equal one is the same moment
+   * of the server's schedule, and the later write of it is adopted as before.
+   * Compared against the time the stored answer was GIVEN, not the time it has
+   * aged to (`serverTimeOf`), or every fresh answer would race network latency
+   * against the stored record's elapsed time. An answer or record that cannot
+   * say when it was given cannot be ordered and is not refused here; a record
+   * with no server time is never replayed in the first place.
+   */
+  const answerPredatesStored = (key: TouchpointContentKey, serverTime: unknown): boolean => {
+    const answeredAt = Date.parse(String(serverTime));
+    if (!Number.isFinite(answeredAt)) return false;
+    const stored = readAssembly(key);
+    if (!stored) return false;
+    const storedAt = statedServerTimeOf(stored);
+    return Number.isFinite(storedAt) && answeredAt < storedAt;
   };
 
   /**
@@ -745,6 +776,7 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
           return;
         const identity = touchpointCachedIdentityOf(response);
         if (answerPredatesRevocation(key.scope, identity, response.serverTime)) return;
+        if (answerPredatesStored(key, response.serverTime)) return;
         const entryBytes = Buffer.from(entryModule, 'utf8');
         if (!blobName(entryDigest) || sha256(entryBytes) !== entryDigest) return;
         const stored: CachedResource[] = [];
@@ -851,6 +883,7 @@ export function createTouchpointContentCache(runtimeDataDir: string): Touchpoint
     try {
       const identity = touchpointCachedIdentityOf(full);
       if (answerPredatesRevocation(key.scope, identity, trimmed.serverTime)) return;
+      if (answerPredatesStored(key, trimmed.serverTime)) return;
       const fetchedAt = nowEstimate();
       writeFresh(key, {
         ...record,
