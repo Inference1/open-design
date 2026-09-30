@@ -282,7 +282,40 @@ test("[P1] production modal closes through its mounted SDK control without a hos
 	await expect(modal).toBeHidden();
 });
 
-for (const mode of ["failed", "hidden", "disabled"] as const) {
+test("[P1] production modal leaves no dialog or backdrop behind when the mounted content throws", async ({
+	page,
+}) => {
+	await page.addInitScript(() => {
+		const seen: string[] = [];
+		(window as unknown as { __touchpointDiagnostics: string[] }).__touchpointDiagnostics = seen;
+		document.addEventListener("touchpointdiagnostic", (event) => {
+			const code = (event as CustomEvent<{ code?: string }>).detail?.code;
+			if (code) seen.push(code);
+		});
+	});
+	await installProductionFixture(page, { mode: "failed" });
+	await page.goto("/", { waitUntil: "domcontentloaded" });
+	await expect(page.getByText("Loading OpenDesign…")).toHaveCount(0, {
+		timeout: T.long,
+	});
+	// The mount was attempted and failed: only then is "no dialog" evidence.
+	await expect
+		.poll(
+			() =>
+				page.evaluate(
+					() =>
+						(window as unknown as { __touchpointDiagnostics: string[] })
+							.__touchpointDiagnostics,
+				),
+			{ timeout: T.long },
+		)
+		.toContain("fixture_mount_failed");
+	await expect(page.getByRole("dialog", { name: "Campaign" })).toHaveCount(0);
+	await expect(page.locator('[aria-modal="true"]')).toHaveCount(0);
+	await expect(page.locator("body")).not.toHaveCSS("overflow", "hidden");
+});
+
+for (const mode of ["hidden", "disabled"] as const) {
 	test(`[P1] production modal adds no host Close button and Escape dismisses when the mounted control is ${mode}`, async ({
 		page,
 	}) => {

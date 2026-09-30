@@ -411,6 +411,28 @@ describe("OPEND-3298 context recovery and remaining P1", () => {
     expect(screen.queryByRole("dialog", { name: "Test campaign" })).not.toBeNull();
   });
 
+  it("renews healthy presentations past the original lease while one renewal keeps hanging", async () => {
+    await start();
+    expect(visibleEntry()).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Test campaign" })).not.toBeNull();
+    decisionReply = (key, locale, id) => key === modal
+      ? new Promise<Response>(() => {}) : Response.json(decision(key, locale, oldGeneration, id));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await settle(12_000);
+    // The hung modal stays on screen within the authority it already had.
+    expect(screen.queryByRole("dialog", { name: "Test campaign" })).not.toBeNull();
+    // Well past the first 60s lease: the hover kept renewing on its own answers
+    // and never blinked out, while the modal lapsed with the authority its last
+    // answer granted.
+    const hidden: number[] = [];
+    for (let second = 13; second <= 150; second += 1) {
+      await settle(1_000);
+      if (!visibleEntry()) hidden.push(second);
+    }
+    expect(hidden).toEqual([]);
+    expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+  });
+
   it("reports actionable mismatch identities instead of a bare diagnostic code", async () => {
     decisionReply = (key, locale, id) => Response.json({ ...decision(key, locale, oldGeneration, id), snapshotHash: "sha256:other" });
     await start();

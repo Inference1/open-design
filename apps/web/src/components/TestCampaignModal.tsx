@@ -15,7 +15,9 @@ import {
 	requireCampaignAction,
 } from "./touchpoint-navigation";
 import {
+	REQUEST_TIMEOUT_MS,
 	TEST_MAX_AUTHORIZATION_MS,
+	TOUCHPOINT_POLL_MS,
 	type TouchpointLifecycleLoad,
 	resolveAuthorizationDeadline,
 	touchpointWithdrawsDisplay,
@@ -181,6 +183,29 @@ class TestPlacementTimeoutError extends Error {
  * so a hung placement settles before the attempt is abandoned.
  */
 export const TEST_PLACEMENT_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * The least authority a slow placement's previous answer must still hold to
+ * be presented again: enough to reach the next poll and survive that round's
+ * whole budget, so it never shortens the lease of the siblings shown with it.
+ */
+const TEST_HELD_PLACEMENT_MIN_MS = TOUCHPOINT_POLL_MS + REQUEST_TIMEOUT_MS;
+
+/** One placement answer that passed every selection and schedule check. */
+type LoadedTestPlacement = Readonly<{
+	placementKey: TestCampaignPlacement;
+	decision: TestDecision;
+	startsAt: number;
+	endsAt: number;
+	serverTime: number;
+	validForMs: number;
+}>;
+
+/** Elapsed time measured on both clocks, as the lifecycle measures its leases. */
+type TestClock = Readonly<{ monotonic: number; wall: number }>;
+const testClock = (): TestClock => ({ monotonic: performance.now(), wall: Date.now() });
+const testElapsed = (start: TestClock) =>
+	Math.max(0, performance.now() - start.monotonic, Date.now() - start.wall);
 
 /** A decision that disagrees with the selection, carrying both identities. */
 class TestDecisionMismatchError extends Error {
@@ -851,6 +876,15 @@ export function TestCampaignModal({
 		let contextRequest: Promise<TestContext | null> | null = null;
 		let windowBounds: Readonly<{ startsAt: number; endsAt: number }> | null =
 			null;
+		/**
+		 * The last answer each placement received, with the monotonic time its
+		 * authority runs out. A renewal whose placement is merely slow presents
+		 * that answer again, but only within the authority it already granted.
+		 */
+		const lastAuthorized = new Map<
+			TestCampaignPlacement,
+			{ context: TestContext; item: LoadedTestPlacement; received: TestClock }
+		>();
 		/** Resolves `null` for a context response this selection cannot use. */
 		const fetchContext = async (signal: AbortSignal): Promise<TestContext | null> => {
 			const response = await fetch("/api/touchpoints/test-runtime/context", {
@@ -1080,15 +1114,40 @@ export function TestCampaignModal({
 				settled = await loadPlacements(selectedContext);
 				if (!current()) return { kind: "retain" };
 			}
-			// A renewal keeps what is on screen while a placement is merely slow.
-			if (
-				failures(settled).some(
-					(error) =>
-						error instanceof TestPlacementTimeoutError &&
-						active?.decisions.has(error.placementKey),
+			// Record every fresh answer, then let a placement that is on screen but
+			// merely slow present its last answer again. Only that placement is
+			// held back, and only within the authority its answer granted: its
+			// healthy siblings still adopt their own renewals, so one hung request
+			// can no longer freeze the whole session until the first lease lapses.
+			settled = settled.map((result, index): (typeof settled)[number] => {
+				const placementKey = placements[index]!;
+				if (result.status === "fulfilled") {
+					if (result.value)
+						lastAuthorized.set(placementKey, {
+							context: selectedContext,
+							item: result.value,
+							received: testClock(),
+						});
+					return result;
+				}
+				if (
+					!(result.reason instanceof TestPlacementTimeoutError) ||
+					!active?.decisions.has(placementKey)
 				)
-			)
-				return { kind: "retain" };
+					return result;
+				const previous = lastAuthorized.get(placementKey);
+				if (!previous || previous.context !== selectedContext) return result;
+				const remaining =
+					previous.item.validForMs - testElapsed(previous.received);
+				// An answer that cannot outlast the next renewal round would cap the
+				// healthy siblings' lease below that round and blank them with it,
+				// so it is dropped now, earlier than its authority, never later.
+				if (remaining < TEST_HELD_PLACEMENT_MIN_MS) return result;
+				return {
+					status: "fulfilled",
+					value: { ...previous.item, validForMs: remaining },
+				};
+			});
 			const loaded = isolateTestPresentationFailures(placements, settled);
 			if (!current()) return { kind: "retain" };
 			const decisions = loaded.filter(

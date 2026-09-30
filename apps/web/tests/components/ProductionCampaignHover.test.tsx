@@ -347,7 +347,7 @@ describe("ProductionCampaignHover", () => {
 		});
 		vi.stubGlobal("requestAnimationFrame", () => 0);
 		vi.stubGlobal("cancelAnimationFrame", () => {});
-		setTestRuntimeSession({ decisions: new Map([["opend.home.hover-entry", decision("opend.home.hover-entry")], ["opend.home.hover-layer", decision("opend.home.hover-layer")]]), isAuthorized: () => true } as unknown as TestRuntimeSession);
+		setTestRuntimeSession({ selectionKey: "hover-rerender", deployment: { id: "deployment-1", snapshotHash: "sha256:hover" }, context: { deploymentId: "deployment-1", scenario: "realtime", updatedAt: "2026-01-01T00:00:00.000Z" }, decisions: new Map([["opend.home.hover-entry", decision("opend.home.hover-entry")], ["opend.home.hover-layer", decision("opend.home.hover-layer")]]), isAuthorized: () => true } as unknown as TestRuntimeSession);
 		const { rerender } = render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
 		const root = await screen.findByTestId("cms-hover-overlay-root");
 		const [entry, layer] = Array.from(root.querySelectorAll<OpenDesignTouchpointElement>("opend-touchpoint"));

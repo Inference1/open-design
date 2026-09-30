@@ -257,6 +257,8 @@ const clock = (): Clock => ({ monotonic: performance.now(), wall: Date.now() });
  */
 const elapsed = (start: Clock) => Math.max(0, performance.now() - start.monotonic, Date.now() - start.wall);
 const POLL_MS = 30_000;
+/** The renewal interval, for callers that must hold authority across one round. */
+export const TOUCHPOINT_POLL_MS = POLL_MS;
 /**
  * One refresh fetches a context and every enabled placement's content, so the
  * budget has to cover a whole round, not one request. A ten-second budget was

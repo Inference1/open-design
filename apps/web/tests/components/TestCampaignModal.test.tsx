@@ -720,6 +720,38 @@ describe("Test campaign decision and lifecycle guards", () => {
 		create.mockRestore();
 		revoke.mockRestore();
 	});
+	it("gives initial focus to the first control a user can reach, past hidden and unfocusable ones", async () => {
+		const { focusWebTouchpointModal } = await import(
+			"../../src/components/touchpoint-component"
+		);
+		const modal = document.createElement("div");
+		modal.tabIndex = -1;
+		const component = document.createElement("opend-touchpoint");
+		const shadow =
+			component.shadowRoot ?? component.attachShadow({ mode: "open" });
+		const hiddenInput = document.createElement("input");
+		hiddenInput.type = "hidden";
+		const collapsed = document.createElement("div");
+		collapsed.style.display = "none";
+		collapsed.append(document.createElement("button"));
+		const invisible = document.createElement("button");
+		invisible.style.visibility = "hidden";
+		const inertGroup = document.createElement("div");
+		inertGroup.inert = true;
+		inertGroup.append(document.createElement("button"));
+		const refusing = document.createElement("button");
+		refusing.focus = () => {};
+		const action = document.createElement("button");
+		shadow.append(hiddenInput, collapsed, invisible, inertGroup, refusing, action);
+		modal.append(component);
+		document.body.append(modal);
+		focusWebTouchpointModal(modal);
+		expect(shadow.activeElement).toBe(action);
+		action.remove();
+		focusWebTouchpointModal(modal);
+		expect(document.activeElement).toBe(modal);
+		modal.remove();
+	});
 	it("traps both directions across the mounted open ShadowRoot boundary", async () => {
 		const { trapWebTouchpointModalFocus } = await import(
 			"../../src/components/touchpoint-component"

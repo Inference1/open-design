@@ -629,14 +629,26 @@ export function emitWebTouchpointDiagnostic(diagnostic: TouchpointDiagnostic) {
 }
 
 const FOCUSABLE_SELECTOR =
-	'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+	'button:not([disabled]), a[href], area[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-/** Returns host controls in composed-tree order, including open component ShadowRoots. */
+/**
+ * Returns host controls in composed-tree order, including open component
+ * ShadowRoots. A control the user cannot reach is left out: a hidden input,
+ * anything inside an `inert`, `hidden` or `display: none` subtree, and a
+ * control whose own `visibility` hides it (a descendant may still show).
+ */
 function composedFocusableElements(root: ParentNode): HTMLElement[] {
 	const focusable: HTMLElement[] = [];
 	for (const child of Array.from(root.children)) {
-		if (!(child instanceof HTMLElement) || child.hidden) continue;
-		if (child.matches(FOCUSABLE_SELECTOR)) focusable.push(child);
+		if (!(child instanceof HTMLElement) || child.hidden || child.inert) continue;
+		const style = getComputedStyle(child);
+		if (style.display === "none") continue;
+		if (
+			child.matches(FOCUSABLE_SELECTOR) &&
+			style.visibility !== "hidden" &&
+			style.visibility !== "collapse"
+		)
+			focusable.push(child);
 		if (child.shadowRoot)
 			focusable.push(...composedFocusableElements(child.shadowRoot));
 		focusable.push(...composedFocusableElements(child));
@@ -690,7 +702,13 @@ export function lockWebTouchpointModalScroll(
  */
 export function focusWebTouchpointModal(modal: HTMLElement | null) {
 	if (!modal) return;
-	(composedFocusableElements(modal)[0] ?? modal).focus();
+	// A control can still refuse focus (a style this check cannot see); the
+	// next one is tried, and the container keeps focus inside the modal last.
+	for (const candidate of composedFocusableElements(modal)) {
+		candidate.focus();
+		if (composedActiveElement() === candidate) return;
+	}
+	modal.focus();
 }
 
 /** Keeps keyboard focus inside a host-owned modal without exposing host DOM to content. */
