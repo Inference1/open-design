@@ -47,7 +47,7 @@ OpenDesign 是**協作式設計 Agent 工作區**。從需求簡述開始，使�
 <sub><b>Home</b> — 從需求簡述或範例開始。</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — 重新開啟設計系統、媒體與原型專案。" width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — 重新開啟設計系統、媒體與原型專案。" width="500" /></a><br/>
 <sub><b>All projects</b> — 重新開啟設計系統、媒體與原型專案。</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ OpenDesign 是**協作式設計 Agent 工作區**。從需求簡述開始，使�
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — 與 Agent 一起建立並反覆調整互動式網頁，即時預覽成果。" /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — 與 Agent 一起建立並反覆調整互動式網頁，即時預覽成果。" /><br/>
 <sub><b>Prototype</b> — 與 Agent 一起建立並反覆調整互動式網頁，即時預覽成果。</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ OpenDesign 是**協作式設計 Agent 工作區**。從需求簡述開始，使�
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — 從對話中生成視覺素材，檢視成果，再下載或開啟。" /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — 從對話中生成視覺素材，檢視成果，再下載或開啟。" /><br/>
 <sub><b>Image</b> — 從對話中生成視覺素材，檢視成果，再下載或開啟。</sub>
 </td>
 <td width="50%" valign="top">

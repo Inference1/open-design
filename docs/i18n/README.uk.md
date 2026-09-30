@@ -47,7 +47,7 @@ OpenDesign — **спільний робочий простір із дизай�
 <sub><b>Home</b> — Почніть з опису завдання або прикладу.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — Повертайтеся до дизайн-систем, медіа та прототипів." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — Повертайтеся до дизайн-систем, медіа та прототипів." width="500" /></a><br/>
 <sub><b>All projects</b> — Повертайтеся до дизайн-систем, медіа та прототипів.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ OpenDesign — **спільний робочий простір із дизай�
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — Створюйте й удосконалюйте інтерактивні вебсайти разом з агентом і переглядайте результат наживо." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — Створюйте й удосконалюйте інтерактивні вебсайти разом з агентом і переглядайте результат наживо." /><br/>
 <sub><b>Prototype</b> — Створюйте й удосконалюйте інтерактивні вебсайти разом з агентом і переглядайте результат наживо.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ OpenDesign — **спільний робочий простір із дизай�
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — Створюйте візуальні матеріали з розмови, перевіряйте результат, а потім завантажуйте або відкривайте." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — Створюйте візуальні матеріали з розмови, перевіряйте результат, а потім завантажуйте або відкривайте." /><br/>
 <sub><b>Image</b> — Створюйте візуальні матеріали з розмови, перевіряйте результат, а потім завантажуйте або відкривайте.</sub>
 </td>
 <td width="50%" valign="top">

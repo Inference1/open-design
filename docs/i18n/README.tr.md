@@ -47,7 +47,7 @@ Bu iş akışı açık ve genişletilebilir. **Açık kaynaklı Claude Design al
 <sub><b>Home</b> — Bir proje özeti veya örnekle başlayın.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — Tasarım sistemlerinize, medyaya ve prototiplere geri dönün." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — Tasarım sistemlerinize, medyaya ve prototiplere geri dönün." width="500" /></a><br/>
 <sub><b>All projects</b> — Tasarım sistemlerinize, medyaya ve prototiplere geri dönün.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ Bu iş akışı açık ve genişletilebilir. **Açık kaynaklı Claude Design al
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — Ajanınızla etkileşimli web deneyimleri oluşturup geliştirin ve canlı önizleyin." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — Ajanınızla etkileşimli web deneyimleri oluşturup geliştirin ve canlı önizleyin." /><br/>
 <sub><b>Prototype</b> — Ajanınızla etkileşimli web deneyimleri oluşturup geliştirin ve canlı önizleyin.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ Bu iş akışı açık ve genişletilebilir. **Açık kaynaklı Claude Design al
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — Sohbetten görsel varlıklar üretin, sonucu inceleyip indirin veya açın." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — Sohbetten görsel varlıklar üretin, sonucu inceleyip indirin veya açın." /><br/>
 <sub><b>Image</b> — Sohbetten görsel varlıklar üretin, sonucu inceleyip indirin veya açın.</sub>
 </td>
 <td width="50%" valign="top">

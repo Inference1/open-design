@@ -47,7 +47,7 @@ Esse fluxo de trabalho é aberto e extensível. Como **alternativa de código ab
 <sub><b>Home</b> — Comece com uma descrição ou um exemplo.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — Revisite sistemas de design, mídias e protótipos." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — Revisite sistemas de design, mídias e protótipos." width="500" /></a><br/>
 <sub><b>All projects</b> — Revisite sistemas de design, mídias e protótipos.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ Esse fluxo de trabalho é aberto e extensível. Como **alternativa de código ab
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — Crie e refine experiências web interativas com seu agente e uma prévia em tempo real." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — Crie e refine experiências web interativas com seu agente e uma prévia em tempo real." /><br/>
 <sub><b>Prototype</b> — Crie e refine experiências web interativas com seu agente e uma prévia em tempo real.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ Esse fluxo de trabalho é aberto e extensível. Como **alternativa de código ab
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — Gere recursos visuais pela conversa, confira o resultado e baixe ou abra o arquivo." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — Gere recursos visuais pela conversa, confira o resultado e baixe ou abra o arquivo." /><br/>
 <sub><b>Image</b> — Gere recursos visuais pela conversa, confira o resultado e baixe ou abra o arquivo.</sub>
 </td>
 <td width="50%" valign="top">

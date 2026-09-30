@@ -47,7 +47,7 @@ OpenDesign은 **협업형 디자인 에이전트 워크스페이스**입니다. 
 <sub><b>Home</b> — 작업 설명이나 예시로 시작하세요.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — 디자인 시스템, 미디어, 프로토타입을 다시 찾아보세요." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — 디자인 시스템, 미디어, 프로토타입을 다시 찾아보세요." width="500" /></a><br/>
 <sub><b>All projects</b> — 디자인 시스템, 미디어, 프로토타입을 다시 찾아보세요.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ OpenDesign은 **협업형 디자인 에이전트 워크스페이스**입니다. 
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — 에이전트와 인터랙티브 웹 경험을 만들고 다듬으며 실시간으로 미리 보세요." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — 에이전트와 인터랙티브 웹 경험을 만들고 다듬으며 실시간으로 미리 보세요." /><br/>
 <sub><b>Prototype</b> — 에이전트와 인터랙티브 웹 경험을 만들고 다듬으며 실시간으로 미리 보세요.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ OpenDesign은 **협업형 디자인 에이전트 워크스페이스**입니다. 
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — 대화에서 시각 자료를 생성하고 결과를 확인한 뒤 다운로드하거나 여세요." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — 대화에서 시각 자료를 생성하고 결과를 확인한 뒤 다운로드하거나 여세요." /><br/>
 <sub><b>Image</b> — 대화에서 시각 자료를 생성하고 결과를 확인한 뒤 다운로드하거나 여세요.</sub>
 </td>
 <td width="50%" valign="top">

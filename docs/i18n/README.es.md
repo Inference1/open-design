@@ -47,7 +47,7 @@ Ese flujo de trabajo es abierto y ampliable. Como **alternativa de código abier
 <sub><b>Home</b> — Empieza con una descripción o un ejemplo.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — Vuelve a tus sistemas de diseño, contenidos multimedia y prototipos." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — Vuelve a tus sistemas de diseño, contenidos multimedia y prototipos." width="500" /></a><br/>
 <sub><b>All projects</b> — Vuelve a tus sistemas de diseño, contenidos multimedia y prototipos.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ Ese flujo de trabajo es abierto y ampliable. Como **alternativa de código abier
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — Crea y perfecciona experiencias web interactivas con tu agente y una vista previa en directo." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — Crea y perfecciona experiencias web interactivas con tu agente y una vista previa en directo." /><br/>
 <sub><b>Prototype</b> — Crea y perfecciona experiencias web interactivas con tu agente y una vista previa en directo.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ Ese flujo de trabajo es abierto y ampliable. Como **alternativa de código abier
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — Genera recursos visuales desde la conversación, revisa el resultado y descárgalo o ábrelo." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — Genera recursos visuales desde la conversación, revisa el resultado y descárgalo o ábrelo." /><br/>
 <sub><b>Image</b> — Genera recursos visuales desde la conversación, revisa el resultado y descárgalo o ábrelo.</sub>
 </td>
 <td width="50%" valign="top">

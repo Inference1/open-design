@@ -47,7 +47,7 @@ OpenDesign — **совместное рабочее пространство с
 <sub><b>Home</b> — Начните с описания задачи или примера.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — Вернитесь к дизайн-системам, медиафайлам и прототипам." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — Вернитесь к дизайн-системам, медиафайлам и прототипам." width="500" /></a><br/>
 <sub><b>All projects</b> — Вернитесь к дизайн-системам, медиафайлам и прототипам.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ OpenDesign — **совместное рабочее пространство с
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — Создавайте и улучшайте интерактивные сайты вместе с агентом и просматривайте результат в реальном времени." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — Создавайте и улучшайте интерактивные сайты вместе с агентом и просматривайте результат в реальном времени." /><br/>
 <sub><b>Prototype</b> — Создавайте и улучшайте интерактивные сайты вместе с агентом и просматривайте результат в реальном времени.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ OpenDesign — **совместное рабочее пространство с
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — Создавайте изображения из переписки, проверяйте результат, затем скачивайте или открывайте его." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — Создавайте изображения из переписки, проверяйте результат, затем скачивайте или открывайте его." /><br/>
 <sub><b>Image</b> — Создавайте изображения из переписки, проверяйте результат, затем скачивайте или открывайте его.</sub>
 </td>
 <td width="50%" valign="top">

@@ -49,7 +49,7 @@ OpenDesign **مساحة عمل تعاونية لوكلاء التصميم**. ا�
 <sub><b>Home</b> — ابدأ بوصف موجز أو مثال.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — عُد إلى أنظمة التصميم والوسائط والنماذج الأولية." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — عُد إلى أنظمة التصميم والوسائط والنماذج الأولية." width="500" /></a><br/>
 <sub><b>All projects</b> — عُد إلى أنظمة التصميم والوسائط والنماذج الأولية.</sub>
 </td>
 </tr>
@@ -70,7 +70,7 @@ OpenDesign **مساحة عمل تعاونية لوكلاء التصميم**. ا�
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — أنشئ تجارب ويب تفاعلية وحسّنها مع وكيلك وشاهد معاينة مباشرة." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — أنشئ تجارب ويب تفاعلية وحسّنها مع وكيلك وشاهد معاينة مباشرة." /><br/>
 <sub><b>Prototype</b> — أنشئ تجارب ويب تفاعلية وحسّنها مع وكيلك وشاهد معاينة مباشرة.</sub>
 </td>
 <td width="50%" valign="top">
@@ -80,7 +80,7 @@ OpenDesign **مساحة عمل تعاونية لوكلاء التصميم**. ا�
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — أنشئ عناصر مرئية من المحادثة وراجع النتيجة، ثم نزّلها أو افتحها." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — أنشئ عناصر مرئية من المحادثة وراجع النتيجة، ثم نزّلها أو افتحها." /><br/>
 <sub><b>Image</b> — أنشئ عناصر مرئية من المحادثة وراجع النتيجة، ثم نزّلها أو افتحها.</sub>
 </td>
 <td width="50%" valign="top">

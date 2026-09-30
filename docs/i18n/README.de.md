@@ -47,7 +47,7 @@ Dieser Ablauf ist offen und erweiterbar. Als **quelloffene Alternative zu Claude
 <sub><b>Home</b> — Starten Sie mit einem Briefing oder einem Beispiel.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — Öffnen Sie Designsysteme, Medien und Prototypen erneut." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — Öffnen Sie Designsysteme, Medien und Prototypen erneut." width="500" /></a><br/>
 <sub><b>All projects</b> — Öffnen Sie Designsysteme, Medien und Prototypen erneut.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ Dieser Ablauf ist offen und erweiterbar. Als **quelloffene Alternative zu Claude
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — Erstellen und verfeinern Sie interaktive Web-Erlebnisse mit Ihrem Agenten und einer Live-Vorschau." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — Erstellen und verfeinern Sie interaktive Web-Erlebnisse mit Ihrem Agenten und einer Live-Vorschau." /><br/>
 <sub><b>Prototype</b> — Erstellen und verfeinern Sie interaktive Web-Erlebnisse mit Ihrem Agenten und einer Live-Vorschau.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ Dieser Ablauf ist offen und erweiterbar. Als **quelloffene Alternative zu Claude
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — Erzeugen Sie visuelle Inhalte aus dem Gespräch, prüfen Sie das Ergebnis und laden oder öffnen Sie es." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — Erzeugen Sie visuelle Inhalte aus dem Gespräch, prüfen Sie das Ergebnis und laden oder öffnen Sie es." /><br/>
 <sub><b>Image</b> — Erzeugen Sie visuelle Inhalte aus dem Gespräch, prüfen Sie das Ergebnis und laden oder öffnen Sie es.</sub>
 </td>
 <td width="50%" valign="top">

@@ -47,7 +47,7 @@ Ce processus est ouvert et extensible. En tant qu'**alternative open source à C
 <sub><b>Home</b> — Partez d&#x27;un brief ou d&#x27;un exemple.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — Retrouvez vos systèmes de design, médias et prototypes." width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — Retrouvez vos systèmes de design, médias et prototypes." width="500" /></a><br/>
 <sub><b>All projects</b> — Retrouvez vos systèmes de design, médias et prototypes.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ Ce processus est ouvert et extensible. En tant qu'**alternative open source à C
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — Créez et améliorez des expériences web interactives avec votre agent et un aperçu en direct." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — Créez et améliorez des expériences web interactives avec votre agent et un aperçu en direct." /><br/>
 <sub><b>Prototype</b> — Créez et améliorez des expériences web interactives avec votre agent et un aperçu en direct.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ Ce processus est ouvert et extensible. En tant qu'**alternative open source à C
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — Générez des visuels depuis la conversation, examinez le résultat, puis téléchargez-le ou ouvrez-le." /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — Générez des visuels depuis la conversation, examinez le résultat, puis téléchargez-le ou ouvrez-le." /><br/>
 <sub><b>Image</b> — Générez des visuels depuis la conversation, examinez le résultat, puis téléchargez-le ou ouvrez-le.</sub>
 </td>
 <td width="50%" valign="top">

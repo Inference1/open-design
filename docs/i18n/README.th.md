@@ -47,7 +47,7 @@ OpenDesign คือ**พื้นที่ทำงานร่วมกับ�
 <sub><b>Home</b> — เริ่มจากบรีฟหรือตัวอย่าง</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — กลับไปดูระบบดีไซน์ สื่อ และต้นแบบ" width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — กลับไปดูระบบดีไซน์ สื่อ และต้นแบบ" width="500" /></a><br/>
 <sub><b>All projects</b> — กลับไปดูระบบดีไซน์ สื่อ และต้นแบบ</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ OpenDesign คือ**พื้นที่ทำงานร่วมกับ�
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — สร้างและปรับปรุงเว็บแบบโต้ตอบกับเอเจนต์ พร้อมดูตัวอย่างสด" /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — สร้างและปรับปรุงเว็บแบบโต้ตอบกับเอเจนต์ พร้อมดูตัวอย่างสด" /><br/>
 <sub><b>Prototype</b> — สร้างและปรับปรุงเว็บแบบโต้ตอบกับเอเจนต์ พร้อมดูตัวอย่างสด</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ OpenDesign คือ**พื้นที่ทำงานร่วมกับ�
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — สร้างภาพจากบทสนทนา ตรวจผลลัพธ์ แล้วดาวน์โหลดหรือเปิด" /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — สร้างภาพจากบทสนทนา ตรวจผลลัพธ์ แล้วดาวน์โหลดหรือเปิด" /><br/>
 <sub><b>Image</b> — สร้างภาพจากบทสนทนา ตรวจผลลัพธ์ แล้วดาวน์โหลดหรือเปิด</sub>
 </td>
 <td width="50%" valign="top">

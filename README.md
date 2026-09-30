@@ -47,7 +47,7 @@ That workflow is open and extensible. As the **open-source Claude Design alterna
 <sub><b>Home</b> — start with a brief or an example.</sub>
 </td>
 <td width="50%" valign="top">
-<a href="docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="OpenDesign All projects page showing recent design systems, media, and prototypes" width="500" /></a><br/>
+<a href="docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="OpenDesign All projects page showing recent design systems, media, and prototypes" width="500" /></a><br/>
 <sub><b>All projects</b> — revisit design systems, media, and prototypes.</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ That workflow is open and extensible. As the **open-source Claude Design alterna
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/screenshots/product-tour/studio-prototype-2026.png" alt="Website prototype with live preview and agent conversation in OpenDesign Studio" /><br/>
+<img src="docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Website prototype with live preview and agent conversation in OpenDesign Studio" /><br/>
 <sub><b>Prototype</b> — build and refine interactive web experiences with your agent and live preview.</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ That workflow is open and extensible. As the **open-source Claude Design alterna
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/screenshots/product-tour/studio-image-2026.png" alt="Generated fashion portrait preview in OpenDesign Studio" /><br/>
+<img src="docs/screenshots/product-tour/studio-image-2026.webp" alt="Generated fashion portrait preview in OpenDesign Studio" /><br/>
 <sub><b>Image</b> — generate visual assets from the conversation, inspect the result, then download or open it.</sub>
 </td>
 <td width="50%" valign="top">

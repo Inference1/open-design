@@ -47,7 +47,7 @@ OpenDesign は**共同作業型のデザインエージェントワークスペ�
 <sub><b>Home</b> — 要件またはサンプルから始めます。</sub>
 </td>
 <td width="50%" valign="top">
-<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.png" alt="All projects — デザインシステム、メディア、プロトタイプをもう一度開きます。" width="500" /></a><br/>
+<a href="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp"><img src="../../docs/screenshots/product-tour/all-projects-2026-09-30-220900.webp" alt="All projects — デザインシステム、メディア、プロトタイプをもう一度開きます。" width="500" /></a><br/>
 <sub><b>All projects</b> — デザインシステム、メディア、プロトタイプをもう一度開きます。</sub>
 </td>
 </tr>
@@ -68,7 +68,7 @@ OpenDesign は**共同作業型のデザインエージェントワークスペ�
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-prototype-2026.png" alt="Prototype — エージェントと対話しながら Web 体験を制作・改善し、ライブプレビューで確認します。" /><br/>
+<img src="../../docs/screenshots/product-tour/studio-prototype-2026.webp" alt="Prototype — エージェントと対話しながら Web 体験を制作・改善し、ライブプレビューで確認します。" /><br/>
 <sub><b>Prototype</b> — エージェントと対話しながら Web 体験を制作・改善し、ライブプレビューで確認します。</sub>
 </td>
 <td width="50%" valign="top">
@@ -78,7 +78,7 @@ OpenDesign は**共同作業型のデザインエージェントワークスペ�
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="../../docs/screenshots/product-tour/studio-image-2026.png" alt="Image — 会話からビジュアル素材を生成し、結果を確認してダウンロードまたは開きます。" /><br/>
+<img src="../../docs/screenshots/product-tour/studio-image-2026.webp" alt="Image — 会話からビジュアル素材を生成し、結果を確認してダウンロードまたは開きます。" /><br/>
 <sub><b>Image</b> — 会話からビジュアル素材を生成し、結果を確認してダウンロードまたは開きます。</sub>
 </td>
 <td width="50%" valign="top">
