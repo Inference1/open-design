@@ -496,6 +496,35 @@ function decodeProxyBody(
 }
 
 /**
+ * The part of a caller's `accept-encoding` this proxy can read back.
+ *
+ * The daemon does not only pipe decision bodies: it reads them to store content
+ * and to rebuild a trimmed (`contentOmitted`) reply from what it holds. A reply
+ * framed in an encoding `decodeProxyBody` cannot open is echoed untouched, and
+ * for a trimmed reply that means handing the browser a decision with no content.
+ * Chromium advertises `zstd`, so forwarding its header verbatim let upstream
+ * pick exactly such an encoding. Every coding named here must be one
+ * `decodeProxyBody` decodes; q-values are kept, anything else is dropped.
+ */
+function decodableAcceptEncoding(value: string | string[] | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const kept = value
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => {
+      const coding = part.split(';')[0]?.trim().toLowerCase();
+      return (
+        coding === 'gzip' ||
+        coding === 'x-gzip' ||
+        coding === 'deflate' ||
+        coding === 'br' ||
+        coding === 'identity'
+      );
+    });
+  return kept.length > 0 ? kept.join(', ') : null;
+}
+
+/**
  * The whole budget a production decision gets from the runtime before the
  * daemon answers from its own store instead (OPEND-3436 AC2).
  *
@@ -699,9 +728,9 @@ function proxyTouchpointRuntimeRequest(
     // refresh pulled the payload uncompressed — measured at 383KB against 214KB
     // for the same decision. Forward the caller's preference and hand its
     // `content-encoding` back, so the body stays labelled the way it is framed.
-    const acceptEncoding = req.headers['accept-encoding'];
-    if (typeof acceptEncoding === 'string' && acceptEncoding)
-      headers['accept-encoding'] = acceptEncoding;
+    // Only codings the daemon can read are forwarded; see `decodableAcceptEncoding`.
+    const acceptEncoding = decodableAcceptEncoding(req.headers['accept-encoding']);
+    if (acceptEncoding) headers['accept-encoding'] = acceptEncoding;
     if (body) {
       headers['content-type'] =
         typeof req.headers['content-type'] === 'string'
