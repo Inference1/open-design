@@ -33,7 +33,7 @@ spec (`e2e/specs/mac.spec.ts` / `win.spec.ts` via `release-smoke.ts`),
 | not-available / available / downloaded-stays-visible | U, P | desktop unit; specs |
 | Silent startup payload update (allowSilentUpdates) | U, P | desktop unit silent group; mac/win spec `applies a downloaded payload silently on the next cold start` |
 | Artifact selection (payload vs installer, context validity) | U, P | desktop unit routing group; specs |
-| Installer-reinstall floor (`control.launcher.version.min`): three reasons, same-version offer, clamp | U, P | desktop unit reseed group; spec recovery segment |
+| Installer-reinstall floor (`control.launcher.version.min`): three reasons, same-version offer, clamp | U, P | desktop unit reseed group; spec recovery uses a newer floor-satisfying installer after macOS promotion and a same-version installer for legacy outers |
 | Installed-outer version read (bundle config, env override) | U, P | desktop unit `resolveInstalledOuterVersion`; spec recovery segment reads the real outer |
 
 ## C. Download and integrity
