@@ -3,7 +3,7 @@ name: macOS launch entry acceptance
 on:
   push:
     branches:
-      - validation/macos-launch-entry-e26c786
+      - validation/macos-launch-entry-34b63e2
 
 permissions:
   contents: read
