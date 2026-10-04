@@ -253,7 +253,10 @@ nativeDescribe("macOS native launch entry acceptance", () => {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>autohide</key><true/>
 <key>persistent-others</key><array><dict><key>file-label</key><string>Downloads preserved</string></dict></array>
-<key>persistent-apps</key><array>${[tile(oldPayload, 101), tile(finder, 202), tile(newPayload, 303), tile(canonicalAppBundlePath, 404), tile(custom, 505)].join("")}</array>
+<key>persistent-apps</key><array>${[tile(oldPayload, 101), tile(finder, 202), tile(newPayload, 303), tile(canonicalAppBundlePath, 404), tile(custom, 505)].join("")}
+<dict><key>GUID</key><integer>606</integer><key>tile-type</key><string>spacer-tile</string><key>spacer-owned</key><string>unchanged</string></dict>
+<dict><key>GUID</key><integer>707</integer><key>tile-type</key><string>file-tile</string><key>tile-data</key><dict><key>file-label</key><string>Partial tile preserved</string><key>unknown-note</key><string>unchanged</string></dict></dict>
+</array>
 </dict></plist>`);
     const options = { canonicalAppBundlePath, versionsRoot, appBundleName: "Open Design.app", preferencesDomain: domain, restartDock: false };
     try {
@@ -265,8 +268,13 @@ const defaults = $.NSUserDefaults.alloc.initWithSuiteName(${JSON.stringify(domai
 const apps = defaults.objectForKey("persistent-apps");
 const tiles = [];
 function binary(value) { return value && typeof value.isKindOfClass === "function" && value.isKindOfClass($.NSData) ? ObjC.unwrap(value.base64EncodedStringWithOptions(0)) : null; }
+function dictionary(value) { return value && typeof value.isKindOfClass === "function" && value.isKindOfClass($.NSDictionary); }
 for (let i = 0; i < apps.count; i++) {
   const tile = apps.objectAtIndex(i), data = tile.objectForKey("tile-data");
+  if (!dictionary(data) || !dictionary(data.objectForKey("file-data"))) {
+    tiles.push(ObjC.deepUnwrap(tile));
+    continue;
+  }
   tiles.push({guid: ObjC.unwrap(tile.objectForKey("GUID")),
     url: ObjC.unwrap(data.objectForKey("file-data").objectForKey("_CFURLString")),
     label: ObjC.unwrap(data.objectForKey("file-label")),
@@ -275,7 +283,7 @@ for (let i = 0; i < apps.count; i++) {
 JSON.stringify({tiles, autohide: ObjC.unwrap(defaults.objectForKey("autohide")),
   others: ObjC.deepUnwrap(defaults.objectForKey("persistent-others"))});`], { timeout: 10_000 });
       const result = JSON.parse(inspected.stdout) as {
-        tiles: { guid: number; url: string; label: string; bookmark: string | null; opaque: string }[];
+        tiles: unknown[];
         autohide: boolean;
         others: { "file-label": string }[];
       };
@@ -284,6 +292,8 @@ JSON.stringify({tiles, autohide: ObjC.unwrap(defaults.objectForKey("autohide")),
           { guid: 101, url: pathToFileURL(canonicalAppBundlePath).href, label: "Open Design", bookmark: null, opaque: bookmark },
           { guid: 202, url: pathToFileURL(finder).href, label: "Original label 202", bookmark, opaque: bookmark },
           { guid: 505, url: pathToFileURL(custom).href, label: "Original label 505", bookmark, opaque: bookmark },
+          { GUID: 606, "tile-type": "spacer-tile", "spacer-owned": "unchanged" },
+          { GUID: 707, "tile-type": "file-tile", "tile-data": { "file-label": "Partial tile preserved", "unknown-note": "unchanged" } },
         ],
         autohide: true,
         others: [{ "file-label": "Downloads preserved" }],

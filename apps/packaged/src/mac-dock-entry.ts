@@ -82,7 +82,7 @@ function nativePreferencesPrelude(domain: string): string {
   return `ObjC.import("Foundation");
 const preferenceDomain = ${JSON.stringify(domain)};
 const defaults = $.NSUserDefaults.alloc.initWithSuiteName(preferenceDomain);
-function isKind(value, kind) { return value && value.isKindOfClass(kind); }
+function isKind(value, kind) { return value && typeof value.isKindOfClass === "function" && value.isKindOfClass(kind); }
 function string(value) { return isKind(value, $.NSString) ? ObjC.unwrap(value) : null; }
 function entries() {
   const domain = defaults.persistentDomainForName(preferenceDomain);
