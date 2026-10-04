@@ -73,6 +73,7 @@ int main(void) {
 }
 `);
   await execNative("/usr/bin/xcrun", ["clang", source, "-o", executable], { timeout: 30_000 });
+  await rm(source);
   await execNative("/usr/bin/codesign", ["--force", "--sign", "-", input.appPath], { timeout: 10_000 });
   return executable;
 }
@@ -234,7 +235,7 @@ nativeDescribe("macOS native launch entry acceptance", () => {
 const defaults = $.NSUserDefaults.alloc.initWithSuiteName(${JSON.stringify(domain)});
 const apps = defaults.objectForKey("persistent-apps");
 const tiles = [];
-function binary(value) { return value ? ObjC.unwrap(value.base64EncodedStringWithOptions(0)) : null; }
+function binary(value) { return value && value.isKindOfClass($.NSData) ? ObjC.unwrap(value.base64EncodedStringWithOptions(0)) : null; }
 for (let i = 0; i < apps.count; i++) {
   const tile = apps.objectAtIndex(i), data = tile.objectForKey("tile-data");
   tiles.push({guid: ObjC.unwrap(tile.objectForKey("GUID")),

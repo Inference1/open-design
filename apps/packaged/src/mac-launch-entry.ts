@@ -175,12 +175,12 @@ export async function promoteMacLaunchEntry(input: PromoteMacLaunchEntryInput): 
       targetConfig = await configAt(launchPath);
       if (targetConfig != null) {
         if (channelOf(targetConfig) !== input.channel) return { status: "skipped" };
-      } else {
-        const bundleId = await exec("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", join(launchPath, "Contents", "Info.plist")], execOptions);
-        if (bundleId.stdout.trim() !== identity.appId) return { status: "skipped" };
       }
       if (!(await stat(executablePath)).isFile()) return { status: "skipped" };
     }
+    const readBundleId = async (bundle: string) => (await exec("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", join(bundle, "Contents", "Info.plist")], execOptions)).stdout.trim();
+    const sourceBundleId = await readBundleId(sourceBundle);
+    if (sourceBundleId.length === 0 || (before != null && await readBundleId(launchPath) !== sourceBundleId)) return { status: "skipped" };
 
     const descriptorPath = join(runtimeRoot, "launch-entry.json");
     let previous: Partial<MacLaunchEntryDescriptor> | null = null;
@@ -266,9 +266,8 @@ export async function cleanupConfirmedMacLaunchEntry(input: {
     if (JSON.stringify(JSON.parse(await readFile(descriptorPath, "utf8"))) !== JSON.stringify(descriptor)) return { status: "skipped" };
     if (await realpath(stageRoot) !== stageRoot || (await lstat(stageRoot)).isSymbolicLink()) return { status: "skipped" };
     await rm(stageRoot, { recursive: true });
-    if (JSON.stringify(JSON.parse(await readFile(descriptorPath, "utf8"))) !== JSON.stringify(descriptor)) return { status: "cleaned" };
-    const { backupAppBundlePath: _removedBackup, ...retainedDescriptor } = descriptor;
-    await writeDescriptor(descriptorPath, retainedDescriptor);
+    // The immutable backup path remains as recovery history. Rewriting an old
+    // journal here could overwrite a concurrently published newer promotion.
     return { status: "cleaned" };
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "skipped" };

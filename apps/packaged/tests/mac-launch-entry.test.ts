@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -41,7 +41,7 @@ function executor() {
 }
 
 async function fixture({ installed = true } = {}) {
-  const root = await mkdtemp(join(tmpdir(), "od-mac-launch-entry-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "od-mac-launch-entry-")));
   roots.push(root);
   const runtimeRoot = join(root, "launcher", "channels", "beta", "namespaces", "release-beta");
   const sourceBundle = join(runtimeRoot, "versions", version, "payload", bundleName);
@@ -84,7 +84,7 @@ describe("promoteMacLaunchEntry", () => {
     await promoteMacLaunchEntry(input);
     exec.mockClear();
     await expect(promoteMacLaunchEntry(input)).resolves.toMatchObject({ status: "current" });
-    expect(exec).not.toHaveBeenCalled();
+    expect(exec.mock.calls.map(([command]) => command)).toEqual(["/usr/bin/plutil", "/usr/bin/plutil"]);
   });
 
   it("promotes a missing physical entry without exchanging or inventing a rollback bundle", async () => {
@@ -92,14 +92,17 @@ describe("promoteMacLaunchEntry", () => {
     const result = await promoteMacLaunchEntry(input);
     expect(result).toMatchObject({ status: "promoted", launchPath: installedLaunchPath });
     expect(result).not.toHaveProperty("backupAppBundlePath");
-    expect(exec.mock.calls.map(([command]) => command)).toEqual(["/usr/bin/ditto"]);
+    expect(exec.mock.calls.map(([command]) => command)).toEqual(["/usr/bin/plutil", "/usr/bin/ditto"]);
   });
 
   it("keeps the installed app and previous journal when copying fails", async () => {
     const { input, installedLaunchPath, runtimeRoot } = await fixture();
     await writeFile(join(runtimeRoot, "launch-entry.json"), "previous journal");
     const error = new Error("copy failed");
-    input.exec = vi.fn().mockRejectedValue(error);
+    input.exec = vi.fn(async (command) => {
+      if (command === "/usr/bin/ditto") throw error;
+      return { stdout: "io.open-design.desktop.beta" };
+    });
     await expect(promoteMacLaunchEntry(input)).resolves.toEqual({ status: "failed", error });
     expect(await readFile(join(installedLaunchPath, "Contents", "MacOS", product), "utf8")).toBe(oldVersion);
     expect(await readFile(join(runtimeRoot, "launch-entry.json"), "utf8")).toBe("previous journal");
@@ -132,7 +135,7 @@ describe("promoteMacLaunchEntry", () => {
     await mkdir(join(runtimeRoot, "versions", oldVersion));
     await writeFile(join(runtimeRoot, "versions", oldVersion, "keep.txt"), "custom cache");
     expect(await promoteMacLaunchEntry(input)).toMatchObject({ status: "failed" });
-    expect(exec).not.toHaveBeenCalled();
+    expect(exec.mock.calls.map(([command]) => command)).toEqual(["/usr/bin/plutil", "/usr/bin/plutil"]);
     expect(await readFile(join(installedLaunchPath, "Contents", "MacOS", product), "utf8")).toBe(oldVersion);
     expect(await readFile(join(runtimeRoot, "versions", oldVersion, "keep.txt"), "utf8")).toBe("custom cache");
   });
@@ -142,6 +145,16 @@ describe("promoteMacLaunchEntry", () => {
     await expect(promoteMacLaunchEntry({ ...input, installedLaunchPath: join(dirname(installedLaunchPath), "Custom Open Design.app") })).resolves.toEqual({ status: "skipped" });
     await writeFile(join(installedLaunchPath, "Contents", "Resources", "open-design-config.json"), JSON.stringify({ appVersion: "0.23.1", namespace: "default" }));
     await expect(promoteMacLaunchEntry(input)).resolves.toEqual({ status: "skipped" });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("preserves a different application with the same expected filename and version config", async () => {
+    const { input, exec, installedLaunchPath } = await fixture();
+    input.exec = async (command, args) => command === "/usr/bin/plutil"
+      ? { stdout: args.at(-1)!.startsWith(installedLaunchPath) ? "io.custom.application" : "io.open-design.desktop.beta" }
+      : exec(command, args);
+    await expect(promoteMacLaunchEntry(input)).resolves.toEqual({ status: "skipped" });
+    expect(await readFile(join(installedLaunchPath, "Contents", "MacOS", product), "utf8")).toBe(oldVersion);
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -187,11 +200,12 @@ describe("cleanupConfirmedMacLaunchEntry", () => {
     const result = await promoteMacLaunchEntry(input);
     if (result.status !== "promoted") throw new Error("promotion failed");
     const backup = result.backupAppBundlePath!;
+    const journalBefore = await readFile(join(runtimeRoot, "launch-entry.json"), "utf8");
     exec.mockClear();
     await expect(cleanupConfirmedMacLaunchEntry({ runtimeRoot, launchPath: installedLaunchPath, version, generation: 2, platform: "darwin", exec })).resolves.toEqual({ status: "cleaned" });
     await expect(lstat(dirname(backup))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(result.executablePath, "utf8")).toBe(version);
-    expect(JSON.parse(await readFile(join(runtimeRoot, "launch-entry.json"), "utf8"))).not.toHaveProperty("backupAppBundlePath");
+    expect(await readFile(join(runtimeRoot, "launch-entry.json"), "utf8")).toBe(journalBefore);
     expect(exec.mock.calls.map((call) => call.slice(0, 2))).toEqual([["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", ["-u", backup]]]);
   });
 

@@ -141,7 +141,7 @@ if (!isManaged() && current.isEqualToArray(original)) {
   }
   for (let i = plan.removeIndices.length - 1; i >= 0; i--) updated.removeObjectAtIndex(plan.removeIndices[i]);
   defaults.setObjectForKey(updated, "persistent-apps");
-  if (!defaults.synchronize()) throw new Error("Dock preferences could not be saved");
+  if (!defaults.synchronize) throw new Error("Dock preferences could not be saved");
   status = "repaired";
 }
 JSON.stringify({ status });`;

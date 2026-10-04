@@ -18,6 +18,7 @@ const APP = "Open Design.app";
 const CHANNEL = "stable";
 const NAMESPACE = "release-stable";
 const ROOTS: string[] = [];
+const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 
 afterEach(async () => {
   await Promise.all(ROOTS.splice(0).map((root) => rm(root, { force: true, recursive: true })));
@@ -63,7 +64,7 @@ async function seedLauncher(root: string, version: string): Promise<string> {
 /** Mirrors what the packaged launcher writes: `current` -> `versions/<active>`. */
 async function linkStableEntry(root: string, version: string): Promise<string> {
   const ns = namespaceRoot(root);
-  await symlink(join(ns, "versions", version), join(ns, "current"), "dir");
+  await symlink(join(ns, "versions", version), join(ns, "current"), DIRECTORY_LINK_TYPE);
   return join(ns, "current", "payload", APP);
 }
 
@@ -126,7 +127,7 @@ describe("launcher stable entry vs. payload-update eligibility", () => {
     const aliasAppPath = await linkStableEntry(root, "0.24.1");
     const installedLaunchPath = join(root, "Applications", APP);
     await mkdir(join(root, "Applications"), { recursive: true });
-    await symlink(aliasAppPath, installedLaunchPath, "dir");
+    await symlink(aliasAppPath, installedLaunchPath, DIRECTORY_LINK_TYPE);
 
     const config = updaterConfig({ launcherLaunchPath: installedLaunchPath, root });
 
@@ -148,7 +149,7 @@ describe("launcher stable entry vs. payload-update eligibility", () => {
     await linkStableEntry(root, "0.24.0");
     const installedLaunchPath = join(root, "Applications", APP);
     await mkdir(join(root, "Applications"), { recursive: true });
-    await symlink(join(namespaceRoot(root), "current", "payload", APP), installedLaunchPath, "dir");
+    await symlink(join(namespaceRoot(root), "current", "payload", APP), installedLaunchPath, DIRECTORY_LINK_TYPE);
 
     // Activate 0.24.1 the way the launcher does: re-point the alias only.
     await seedLauncher(root, "0.24.1");
@@ -171,7 +172,7 @@ describe("launcher stable entry vs. payload-update eligibility", () => {
     await writeFile(join(foreignApp, "open-design-config.json"), '{"appVersion":"0.24.1"}\n');
     const installedLaunchPath = join(root, "Applications", APP);
     await mkdir(join(root, "Applications"), { recursive: true });
-    await symlink(join(root, "somewhere-else", APP), installedLaunchPath, "dir");
+    await symlink(join(root, "somewhere-else", APP), installedLaunchPath, DIRECTORY_LINK_TYPE);
 
     const config = updaterConfig({ launcherLaunchPath: installedLaunchPath, root });
 
@@ -187,7 +188,7 @@ describe("launcher stable entry vs. payload-update eligibility", () => {
     const aliasAppPath = await linkStableEntry(root, "0.24.0");
     const installedLaunchPath = join(root, "Applications", APP);
     await mkdir(join(root, "Applications"), { recursive: true });
-    await symlink(aliasAppPath, installedLaunchPath, "dir");
+    await symlink(aliasAppPath, installedLaunchPath, DIRECTORY_LINK_TYPE);
 
     // A half-finished activation: runtime.json already names 0.24.1, but the
     // alias was never re-pointed. Path shape alone cannot tell this apart from

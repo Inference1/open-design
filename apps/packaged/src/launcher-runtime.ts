@@ -294,6 +294,7 @@ async function resolvePayloadConfig(
   config: PackagedConfig,
   versionPaths: LauncherVersionPaths,
   channel: LauncherChannel,
+  resourcesPathOverride?: string,
 ): Promise<ResolvedPayloadConfig | null> {
   if (!(await pathExists(versionPaths.manifestPath))) return null;
   const manifest = parsePayloadManifest(await readJsonFile<unknown>(versionPaths.manifestPath), {
@@ -306,9 +307,9 @@ async function resolvePayloadConfig(
     manifest.entry.executable,
   );
   if (desktopExecutablePath == null) return null;
-  const resourcesPath = manifest.platform === "darwin"
+  const resourcesPath = resourcesPathOverride ?? (manifest.platform === "darwin"
     ? join(versionPaths.versionRoot, manifest.entry.cwd, "Contents", "Resources")
-    : join(versionPaths.versionRoot, manifest.payloadRoot, "resources");
+    : join(versionPaths.versionRoot, manifest.payloadRoot, "resources"));
   const packagedConfigPath = join(resourcesPath, "open-design-config.json");
   if (!(await pathExists(packagedConfigPath))) return null;
   const raw = await readJsonFile<RawPackagedConfig>(packagedConfigPath);
@@ -520,6 +521,10 @@ export async function resolvePackagedLauncherRuntime(
         schemaVersion: number; channel: string; namespace: string; version: string;
         generation: number; executablePath: string; payloadExecutablePath: string; launchPath: string;
       }>(join(launcherPaths.namespaceRoot, "launch-entry.json")).catch(() => null);
+      const canonicalResourcesPath = join(currentPackageLaunchPath, "Contents", "Resources");
+      const bakedConfig = process.platform === "darwin"
+        ? await readJsonFile<RawPackagedConfig>(join(canonicalResourcesPath, "open-design-config.json")).catch(() => null)
+        : null;
       // A copied bundle has a different inode from its cache source. Recognize
       // it only with a matching committed binding and its own baked version;
       // otherwise an old installed launcher must still delegate to the cache.
@@ -528,12 +533,15 @@ export async function resolvePackagedLauncherRuntime(
         binding.channel === channel && binding.namespace === config.namespace &&
         binding.version === selection.pointer.version &&
         binding.generation === selection.pointer.generation &&
-        config.appVersion === selection.pointer.version &&
+        bakedConfig?.appVersion === selection.pointer.version &&
         binding.launchPath === currentPackageLaunchPath &&
         (await lstat(currentPackageLaunchPath).catch(() => null))?.isDirectory() === true &&
         await sameExecutablePath(currentExecutablePath, binding.executablePath) &&
         await sameExecutablePath(binding.payloadExecutablePath, payloadConfig.desktopExecutablePath);
       const effectiveExecutablePath = canonicalDesktopProcess ? currentExecutablePath : payloadConfig.desktopExecutablePath;
+      const effectivePayloadConfig = canonicalDesktopProcess
+        ? await resolvePayloadConfig(config, versionPaths, channel, canonicalResourcesPath) ?? payloadConfig
+        : payloadConfig;
       const payloadDesktopProcess = canonicalDesktopProcess || await sameExecutablePath(
         currentExecutablePath,
         payloadConfig.desktopExecutablePath,
@@ -585,13 +593,13 @@ export async function resolvePackagedLauncherRuntime(
       return {
         cachedDesktopExecutablePath: payloadConfig.desktopExecutablePath,
         canonicalDesktopProcess,
-        config: canonicalDesktopProcess ? config : payloadConfig.config,
+        config: effectivePayloadConfig.config,
         desktopExecutablePath: effectiveExecutablePath,
         descriptor,
         electronNodeCommand: payloadConfig.electronNodeCommand,
         installedLaunchPath,
         launcherPaths,
-        paths: canonicalDesktopProcess ? paths : { ...paths, resourceRoot: payloadConfig.config.resourceRoot },
+        paths: { ...paths, resourceRoot: effectivePayloadConfig.config.resourceRoot },
         payloadDesktopProcess,
         selection,
         source: "payload",
@@ -679,6 +687,11 @@ export async function preparePackagedMacLaunchEntry(
     logger?.warn("failed to promote macOS application launch entry", { error: entry.error });
   }
   if ((entry.status !== "promoted" && entry.status !== "current") || entry.executablePath == null) return;
+  if (entry.launchPath != null && runtime.installedLaunchPath !== entry.launchPath) {
+    runtime.installedLaunchPath = (await writeLauncherInstallDescriptor(
+      runtime.launcherPaths, runtime.launcherPaths.channel, runtime.launcherPaths.namespace, entry.launchPath,
+    )).launchPath;
+  }
   runtime.desktopExecutablePath = entry.executablePath;
   // Even when its path equals the destination, the current process may still
   // map the old bundle's executable. Only the resolver's pre-copy version and
