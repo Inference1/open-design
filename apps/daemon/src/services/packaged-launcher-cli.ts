@@ -56,8 +56,10 @@ export async function openLauncherTarget(target: LauncherLaunchTarget, options: 
   const env = { ...options.env ?? process.env, OD_PACKAGED_NAMESPACE: target.namespace, OD_PACKAGED_NAMESPACE_BASE_ROOT: join(target.root, 'namespaces') };
   // A launcher command can itself run under an agent's Node/sidecar environment.
   // The app must enter desktop mode instead of inheriting that process identity.
+  // Config has already selected the target's identity and root; the child must
+  // read that target's own resources, even when explicit flags changed channel.
   for (const key of Object.keys(env)) {
-    if (key === 'ELECTRON_RUN_AS_NODE' || key.startsWith('OD_SIDECAR_') || key === 'OD_TOOLS_DEV_PARENT_PID') delete env[key as keyof typeof env];
+    if (key === 'ELECTRON_RUN_AS_NODE' || key === 'OD_PACKAGED_CONFIG_PATH' || key.startsWith('OD_SIDECAR_') || key === 'OD_TOOLS_DEV_PARENT_PID') delete env[key as keyof typeof env];
   }
   if (platform !== 'darwin' && platform !== 'win32') throw new LauncherLaunchError('unsupported-platform', `The packaged launcher is not supported on ${platform}.`);
   await new Promise<void>((done, reject) => {

@@ -75,7 +75,7 @@ describe('native packaged launch requests', () => {
   it.each(['darwin', 'win32'] as const)('starts the exact stable executable on %s and removes inherited Node/sidecar identity', async (platform) => {
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
     native.spawn.mockImplementation(() => { queueMicrotask(() => child.emit('spawn')); return child; });
-    await openLauncherTarget(target, { platform, env: { ELECTRON_RUN_AS_NODE: '1', OD_SIDECAR_APP: 'daemon', OD_SIDECAR_CHANNEL: 'beta', OD_SIDECAR_SUPERVISED_CONTEXT: '{}', OD_TOOLS_DEV_PARENT_PID: '123', PATH: '/bin' } });
+    await openLauncherTarget(target, { platform, env: { ELECTRON_RUN_AS_NODE: '1', OD_PACKAGED_CONFIG_PATH: '/other-channel-config.json', OD_SIDECAR_APP: 'daemon', OD_SIDECAR_CHANNEL: 'beta', OD_SIDECAR_SUPERVISED_CONTEXT: '{}', OD_TOOLS_DEV_PARENT_PID: '123', PATH: '/bin' } });
     expect(native.spawn).toHaveBeenCalledWith(target.executablePath, [], {
       cwd: dirname(target.executablePath), detached: true, stdio: 'ignore', windowsHide: true,
       env: { OD_PACKAGED_NAMESPACE: target.namespace, OD_PACKAGED_NAMESPACE_BASE_ROOT: join(target.root, 'namespaces'), PATH: '/bin' },
