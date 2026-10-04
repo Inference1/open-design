@@ -68,6 +68,19 @@ the `current` entry must resolve to the selected payload. The original
 installed application is eligible when no cached payload exists and its
 packaged version matches the selected version, as on first boot.
 
+Windows keeps a fixed installed outer executable that delegates to the
+selected payload. Its baked version may therefore be older than the selected
+app version printed by the CLI. With a validated cached payload, the CLI
+accepts a regular installed executable whose own config identifies the same
+release channel and a version from `0.17.0` through the selected version.
+This conservative compatibility floor is based on the tagged
+[0.17.0 packaged entry](https://github.com/nexu-io/open-design/blob/open-design-v0.17.0/apps/packaged/src/index.ts)
+and [launcher selection](https://github.com/nexu-io/open-design/blob/open-design-v0.17.0/apps/packaged/src/launcher-runtime.ts),
+which already delegate before starting sidecars and interpret the current
+schema-1 pointer/attempt protocol. Unidentified, older, or cross-channel
+Windows outer executables fail clearly. macOS continues to require a canonical
+copy or alias that addresses the selected version directly.
+
 If a stale canonical app or alias points at another version, the commands
 fail with `launcher-stale-entry` instead of launching that copy. Start the
 installed app to let the packaged launcher reconcile its entry, then retry.
