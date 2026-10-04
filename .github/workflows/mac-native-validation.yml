@@ -1,0 +1,105 @@
+name: macOS launch entry acceptance
+
+on:
+  push:
+    branches:
+      - validation/macos-launch-entry-final
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac-native:
+    if: github.repository == 'Inference1/open-design'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      OD_MAC_NATIVE_ACCEPTANCE: '1'
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Initialize native evidence directory
+        run: echo "OD_MAC_NATIVE_EVIDENCE_DIR=$RUNNER_TEMP/mac-native-evidence" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v6.0.8
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: '24'
+      - name: Install immutable workspace dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prepare native Electron and workspace runtime dependencies
+        run: |
+          pnpm --filter @open-design/packaged exec node node_modules/electron/install.js
+          pnpm -r rebuild esbuild
+          pnpm --filter '@open-design/desktop...' --workspace-concurrency=4 --if-present run build
+      - name: Packaged launcher regression and native app launch acceptance
+        run: pnpm --filter @open-design/packaged test
+      - name: Launcher contract regression
+        run: pnpm --filter @open-design/launcher-proto test
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mac-native-${{ matrix.runner }}-${{ github.sha }}
+          path: ${{ runner.temp }}/mac-native-evidence
+          if-no-files-found: warn
+
+  mac-packaged:
+    if: github.repository == 'Inference1/open-design'
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      OD_PACKAGED_E2E_MAC: '1'
+      OD_PACKAGED_E2E_NAMESPACE: release-beta-mac
+      OD_PACKAGED_E2E_RELEASE_CHANNEL: beta
+      OD_PACKAGED_E2E_RELEASE_VERSION: 99.0.0-beta.1
+      OD_PACKAGED_E2E_MAC_SMOKE_PROFILE: full
+      OD_PACKAGED_E2E_MAC_UPDATE_FIXTURE: tools-serve
+      OD_PACKAGED_E2E_MAC_UPDATE_VERSION: 99.0.0-beta.2
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Initialize packaged build and report directories
+        run: |
+          echo "OD_PACKAGED_E2E_TOOLS_PACK_DIR=$RUNNER_TEMP/mac-main" >> "$GITHUB_ENV"
+          echo "OD_PACKAGED_E2E_BUILD_JSON_PATH=$RUNNER_TEMP/mac-tools-pack-build.json" >> "$GITHUB_ENV"
+          echo "OD_PACKAGED_E2E_BUILD_LOG_PATH=$RUNNER_TEMP/mac-tools-pack-build.log" >> "$GITHUB_ENV"
+          echo "OD_PACKAGED_E2E_MAC_UPDATE_BUILD_JSON_PATH=$RUNNER_TEMP/mac-tools-pack-update-build.json" >> "$GITHUB_ENV"
+          echo "OD_PACKAGED_E2E_REPORT_DIR=$RUNNER_TEMP/mac-packaged-report" >> "$GITHUB_ENV"
+      - name: Prepare workspace using the packaged lifecycle harness
+        uses: ./.github/actions/setup-workspace
+        with:
+          postinstall-intent: release-smoke
+      - name: Build baseline unsigned packaged application
+        run: >-
+          pnpm exec tools-pack mac build
+          --dir "$RUNNER_TEMP/mac-main" --namespace release-beta-mac
+          --to dmg --app-version 99.0.0-beta.1 --portable --json
+          > "$RUNNER_TEMP/mac-tools-pack-build.json"
+          2> "$RUNNER_TEMP/mac-tools-pack-build.log"
+      - name: Build newer unsigned payload from the same product commit
+        run: >-
+          pnpm exec tools-pack mac build
+          --dir "$RUNNER_TEMP/mac-update" --namespace release-beta-mac
+          --to dmg --app-version 99.0.0-beta.2 --portable --json
+          > "$RUNNER_TEMP/mac-tools-pack-update-build.json"
+          2> "$RUNNER_TEMP/mac-tools-pack-update-build.log"
+      - name: Run full native packaged update lifecycle
+        working-directory: e2e
+        run: pnpm exec tsx scripts/release-smoke.ts mac specs/mac.spec.ts
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mac-packaged-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/mac-packaged-report
+            ${{ runner.temp }}/mac-tools-pack-*.json
+            ${{ runner.temp }}/mac-tools-pack-*.log
+          if-no-files-found: warn
