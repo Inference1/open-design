@@ -1,0 +1,73 @@
+name: macOS atomic directory exchange probe
+on:
+  push:
+    branches: [validation/macos-rename-probe]
+permissions:
+  contents: read
+jobs:
+  exchange:
+    if: github.repository == 'Inference1/open-design'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - name: Verify directory and symlink swaps with actual renamex_np
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OD_RENAME_PROBE_ROOT="$RUNNER_TEMP/Open Design exchange probe"
+          mkdir -p "$OD_RENAME_PROBE_ROOT/stage.app/Contents" "$OD_RENAME_PROBE_ROOT/installed.app/Contents" "$OD_RENAME_PROBE_ROOT/payload.app/Contents"
+          printf newer > "$OD_RENAME_PROBE_ROOT/stage.app/Contents/version"
+          printf older > "$OD_RENAME_PROBE_ROOT/installed.app/Contents/version"
+          printf payload > "$OD_RENAME_PROBE_ROOT/payload.app/Contents/version"
+          ln -s "$OD_RENAME_PROBE_ROOT/payload.app" "$OD_RENAME_PROBE_ROOT/link.app"
+          /usr/bin/osascript -l JavaScript <<'JXA'
+          ObjC.import("Foundation");
+          ObjC.bindFunction("renamex_np", ["int", ["char *", "char *", "unsigned int"]]);
+          ObjC.bindFunction("perror", ["void", ["char *"]]);
+          const root = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey("OD_RENAME_PROBE_ROOT"));
+          const stage = root + "/stage.app", installed = root + "/installed.app";
+          const forward = $.renamex_np(stage, installed, 2);
+          if (forward !== 0) { $.perror("forward swap"); throw new Error("directory swap returned " + forward); }
+          JSON.stringify({forward});
+          JXA
+          test "$(cat "$OD_RENAME_PROBE_ROOT/installed.app/Contents/version")" = newer
+          test "$(cat "$OD_RENAME_PROBE_ROOT/stage.app/Contents/version")" = older
+          /usr/bin/osascript -l JavaScript <<'JXA'
+          ObjC.import("Foundation");
+          ObjC.bindFunction("renamex_np", ["int", ["char *", "char *", "unsigned int"]]);
+          const root = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey("OD_RENAME_PROBE_ROOT"));
+          const rollback = $.renamex_np(root + "/stage.app", root + "/installed.app", 2);
+          if (rollback !== 0) throw new Error("rollback swap returned " + rollback);
+          JSON.stringify({rollback});
+          JXA
+          test "$(cat "$OD_RENAME_PROBE_ROOT/installed.app/Contents/version")" = older
+          test "$(cat "$OD_RENAME_PROBE_ROOT/stage.app/Contents/version")" = newer
+          /usr/bin/osascript -l JavaScript <<'JXA'
+          ObjC.import("Foundation");
+          ObjC.bindFunction("renamex_np", ["int", ["char *", "char *", "unsigned int"]]);
+          ObjC.bindFunction("perror", ["void", ["char *"]]);
+          const root = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey("OD_RENAME_PROBE_ROOT"));
+          const failure = $.renamex_np(root + "/missing.app", root + "/installed.app", 2);
+          if (failure !== -1) throw new Error("missing source did not fail: " + failure);
+          $.perror("expected missing source errno");
+          JSON.stringify({failure});
+          JXA
+          test "$(cat "$OD_RENAME_PROBE_ROOT/installed.app/Contents/version")" = older
+          test "$(cat "$OD_RENAME_PROBE_ROOT/stage.app/Contents/version")" = newer
+          /usr/bin/osascript -l JavaScript <<'JXA'
+          ObjC.import("Foundation");
+          ObjC.bindFunction("renamex_np", ["int", ["char *", "char *", "unsigned int"]]);
+          ObjC.bindFunction("perror", ["void", ["char *"]]);
+          const root = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey("OD_RENAME_PROBE_ROOT"));
+          const symlinkSwap = $.renamex_np(root + "/link.app", root + "/installed.app", 2);
+          if (symlinkSwap !== 0) { $.perror("symlink swap"); throw new Error("symlink swap returned " + symlinkSwap); }
+          JSON.stringify({symlinkSwap});
+          JXA
+          test -L "$OD_RENAME_PROBE_ROOT/installed.app"
+          test "$(cat "$OD_RENAME_PROBE_ROOT/installed.app/Contents/version")" = payload
+          test "$(cat "$OD_RENAME_PROBE_ROOT/link.app/Contents/version")" = older
+          printf 'Native renamex_np directory exchange, rollback, errno and symlink exchange passed on %s\n' "$(uname -m)" >> "$GITHUB_STEP_SUMMARY"
