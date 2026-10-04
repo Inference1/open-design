@@ -14,6 +14,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 5
     steps:
+      - name: Inspect native open environment support
+        shell: bash
+        run: |
+          /usr/bin/open -h > "$RUNNER_TEMP/open-help.txt" 2>&1 || true
+          cat "$RUNNER_TEMP/open-help.txt"
+          if grep -- '--env' "$RUNNER_TEMP/open-help.txt"; then
+            echo 'open supports explicit --env KEY=value arguments' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'open has no --env support' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Verify directory and symlink swaps with actual renamex_np
         shell: bash
         run: |
