@@ -52,7 +52,7 @@ jobs:
           if-no-files-found: warn
 
   mac-packaged:
-    if: github.repository == 'Inference1/open-design'
+    if: github.repository == 'Inference1/open-design' && github.ref == 'refs/heads/validation/macos-launch-entry'
     runs-on: macos-15
     timeout-minutes: 75
     env:
