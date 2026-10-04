@@ -1139,7 +1139,7 @@ macDescribe('packaged mac runtime smoke', () => {
       expect(rolledBack.launcher.lastSuccessful?.version).toBe(updateScenario.expectedCurrentVersion);
       await assertUpdatedDesktopIdentity(
         await readDesktopIdentityMarker(), rolledBack.launcher,
-        updateScenario.expectedCurrentVersion, install.installedAppPath,
+        updateScenario.expectedCurrentVersion, install.installedAppPath, { allowUnpromotedRollback: true },
       );
       // Degraded steady state: the broken pointer stays active with its
       // attempt as evidence until a healthy release replaces it.
@@ -2764,6 +2764,7 @@ async function assertUpdatedDesktopIdentity(
   launcher: LauncherSnapshot,
   version: string,
   installedAppPath: string,
+  options: { allowUnpromotedRollback?: boolean } = {},
 ): Promise<boolean> {
   const payloadRoot = join(launcher.versionsRoot, version, 'payload');
   expect(identity.pid).toBeGreaterThan(0);
@@ -2784,7 +2785,29 @@ async function assertUpdatedDesktopIdentity(
   expect(physicalAppPath.startsWith(`${await realpath(launcher.versionsRoot)}${sep}`)).toBe(false);
   const pointer = launcher.active?.version === version ? launcher.active : launcher.lastSuccessful;
   expect(pointer?.version).toBe(version);
-  const binding = JSON.parse(await readFile(join(dirname(launcher.runtimePath), 'launch-entry.json'), 'utf8')) as {
+  const config = JSON.parse(await readFile(
+    join(physicalAppPath, 'Contents', 'Resources', 'open-design-config.json'), 'utf8',
+  )) as { appVersion?: string };
+  expect(config.appVersion).toBe(version);
+  const namespaceRoot = dirname(launcher.runtimePath);
+  const bindingPath = join(namespaceRoot, 'launch-entry.json');
+  // A payload that exits before its bootstrap never replaces the original
+  // package. Its last-successful fallback remains the proven installed app.
+  if (options.allowUnpromotedRollback === true && !(await pathExists(bindingPath))) {
+    expect(launcher.lastSuccessful).toEqual(pointer);
+    expect(launcher.active?.version).not.toBe(version);
+    expect(launcher.attempt?.version).toBe(launcher.active?.version);
+    expect(launcher.attempt?.generation).toBe(launcher.active?.generation);
+    expect(await pathExists(join(launcher.versionsRoot, version))).toBe(false);
+    const installed = JSON.parse(await readFile(join(namespaceRoot, 'install.json'), 'utf8')) as {
+      schemaVersion?: number; channel?: string; namespace?: string; launchPath?: string;
+    };
+    expect(installed).toMatchObject({
+      schemaVersion: 1, channel: launcher.channel, namespace: launcher.namespace, launchPath: physicalAppPath,
+    });
+    return true;
+  }
+  const binding = JSON.parse(await readFile(bindingPath, 'utf8')) as {
     schemaVersion?: number;
     channel?: string;
     namespace?: string;
@@ -2806,10 +2829,6 @@ async function assertUpdatedDesktopIdentity(
   if (typeof binding.payloadExecutablePath !== 'string') throw new Error('canonical launch has no retained payload');
   expectPathInside(await realpath(binding.payloadExecutablePath), await realpath(payloadRoot));
   expect(await pathExists(binding.payloadExecutablePath)).toBe(true);
-  const config = JSON.parse(await readFile(
-    join(physicalAppPath, 'Contents', 'Resources', 'open-design-config.json'), 'utf8',
-  )) as { appVersion?: string };
-  expect(config.appVersion).toBe(version);
   return true;
 }
 
