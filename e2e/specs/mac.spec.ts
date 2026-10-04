@@ -1192,6 +1192,9 @@ macDescribe('packaged mac runtime smoke', () => {
       expect(healed.launcher.active?.version).toBe(healedVersion);
       expect(healed.launcher.lastSuccessful?.version).toBe(healedVersion);
       expect(healed.launcher.attempt).toBeNull();
+      await assertUpdatedDesktopIdentity(
+        await readDesktopIdentityMarker(), healed.launcher, healedVersion, install.installedAppPath,
+      );
     } finally {
       restoreUpdateEnv(updateEnv);
       await corruptFixture?.close().catch((error: unknown) => {
