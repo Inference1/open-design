@@ -665,11 +665,18 @@ export async function recordPackagedLauncherRuntimeFailedAttempt(
 /** Run after the predecessor has quit, before launching any new sidecars. */
 export async function preparePackagedMacLaunchEntry(
   runtime: PackagedLauncherRuntime,
-  logger?: Pick<PackagedDesktopLogger, "warn">,
+  logger?: Pick<PackagedDesktopLogger, "warn"> & Partial<Pick<PackagedDesktopLogger, "info">>,
 ): Promise<void> {
   if (process.platform !== "darwin" || runtime.source !== "payload" || !runtime.selection.selected) return;
   const sourceExecutablePath = runtime.cachedDesktopExecutablePath ?? runtime.desktopExecutablePath;
   if (sourceExecutablePath == null || runtime.installedLaunchPath == null) return;
+  logger?.info?.("macOS application launch entry selected", {
+    pid: process.pid, executablePath: process.execPath,
+    pointer: runtime.selection.pointer, reason: runtime.selection.reason,
+    active: runtime.descriptor.active, lastSuccessful: runtime.descriptor.lastSuccessful,
+    canonicalDesktopProcess: runtime.canonicalDesktopProcess === true,
+    sourceExecutablePath, installedLaunchPath: runtime.installedLaunchPath,
+  });
   // Keep rollback selection reflected in the alias too, while retaining the
   // failed active attempt as evidence for subsequent launches.
   const stable = await syncStableLaunchEntry(runtime).catch(() => null);
@@ -682,6 +689,9 @@ export async function preparePackagedMacLaunchEntry(
     generation: runtime.selection.pointer.generation,
     sourceExecutablePath,
     installedLaunchPath: runtime.installedLaunchPath,
+  });
+  logger?.info?.("macOS application launch entry prepared", {
+    pid: process.pid, pointer: runtime.selection.pointer, status: entry.status,
   });
   if (entry.status === "failed") {
     logger?.warn("failed to promote macOS application launch entry", { error: entry.error });

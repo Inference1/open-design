@@ -17,6 +17,17 @@ const lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks
 const nativeDescribe = process.platform === "darwin" && process.env.OD_MAC_NATIVE_ACCEPTANCE === "1"
   ? describe : describe.skip;
 const nativeTemporaryRoot = process.env.RUNNER_TEMP ?? tmpdir();
+const registrationDumpOptions = { timeout: 30_000, maxBuffer: 128 * 1024 * 1024 };
+
+function registrationExcerpt(dump: string, bundleId: string, appPath: string): string {
+  const lines = dump.split("\n");
+  const selected = new Set<number>();
+  for (let index = 0; index < lines.length; index++) {
+    if (!lines[index]?.includes(bundleId) && !lines[index]?.includes(appPath)) continue;
+    for (let nearby = Math.max(0, index - 30); nearby <= Math.min(lines.length - 1, index + 30); nearby++) selected.add(nearby);
+  }
+  return [...selected].sort((a, b) => a - b).map((index) => lines[index]).join("\n");
+}
 
 function xml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -85,19 +96,21 @@ async function launchByBundleId(bundleId: string, markerPath: string, appPath: s
 }> {
   await writeFile(markerPath, "");
   try {
-    const dump = await execNative(lsregister, ["-dump"], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+    const dump = await execNative(lsregister, ["-dump"], registrationDumpOptions);
     expect(dump.stdout).toContain(bundleId);
     expect(dump.stdout).toContain(await realpath(appPath));
     await execNative("/usr/bin/open", ["-W", "-n", "-b", bundleId], { timeout: 15_000 });
   } catch (error) {
-    const dump = await execNative(lsregister, ["-dump"], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+    const dump = await execNative(lsregister, ["-dump"], registrationDumpOptions);
     const diagnostics = await Promise.allSettled([
       execNative(lsregister, ["-lint", appPath], { timeout: 15_000 }),
       execNative("/usr/bin/plutil", ["-lint", join(appPath, "Contents", "Info.plist")], { timeout: 15_000 }),
       execNative("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], { timeout: 15_000 }),
       execNative("/usr/bin/open", ["-W", "-n", appPath], { timeout: 15_000 }),
     ]);
-    await saveEvidence(`registration-failure-${bundleId}`, { bundleId, appPath, dump: dump.stdout, diagnostics });
+    await saveEvidence(`registration-failure-${bundleId}`, {
+      bundleId, appPath, dump: registrationExcerpt(dump.stdout, bundleId, appPath), diagnostics,
+    });
     throw error;
   }
   const marker = (await readFile(markerPath, "utf8")).trim();
@@ -207,7 +220,7 @@ nativeDescribe("macOS native launch entry acceptance", () => {
       });
       const launch = await launchByBundleId(bundleId, markerPath, appPath);
       expect(launch).toEqual({ version: "0.24.1", executablePath: await realpath(executablePath) });
-      const registration = await execNative(lsregister, ["-dump"], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+      const registration = await execNative(lsregister, ["-dump"], registrationDumpOptions);
       expect(registration.stdout).toContain(bundleId);
       expect(registration.stdout).toContain(await realpath(appPath));
       await saveEvidence("launch-services", { bundleId, appPath, launch });
@@ -240,7 +253,10 @@ nativeDescribe("macOS native launch entry acceptance", () => {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>autohide</key><true/>
 <key>persistent-others</key><array><dict><key>file-label</key><string>Downloads preserved</string></dict></array>
-<key>persistent-apps</key><array>${[tile(oldPayload, 101), tile(finder, 202), tile(newPayload, 303), tile(canonicalAppBundlePath, 404), tile(custom, 505)].join("")}</array>
+<key>persistent-apps</key><array>${[tile(oldPayload, 101), tile(finder, 202), tile(newPayload, 303), tile(canonicalAppBundlePath, 404), tile(custom, 505)].join("")}
+<dict><key>GUID</key><integer>606</integer><key>tile-type</key><string>spacer-tile</string><key>spacer-owned</key><string>unchanged</string></dict>
+<dict><key>GUID</key><integer>707</integer><key>tile-type</key><string>file-tile</string><key>tile-data</key><dict><key>file-label</key><string>Partial tile preserved</string><key>unknown-note</key><string>unchanged</string></dict></dict>
+</array>
 </dict></plist>`);
     const options = { canonicalAppBundlePath, versionsRoot, appBundleName: "Open Design.app", preferencesDomain: domain, restartDock: false };
     try {
@@ -252,8 +268,13 @@ const defaults = $.NSUserDefaults.alloc.initWithSuiteName(${JSON.stringify(domai
 const apps = defaults.objectForKey("persistent-apps");
 const tiles = [];
 function binary(value) { return value && typeof value.isKindOfClass === "function" && value.isKindOfClass($.NSData) ? ObjC.unwrap(value.base64EncodedStringWithOptions(0)) : null; }
+function dictionary(value) { return value && typeof value.isKindOfClass === "function" && value.isKindOfClass($.NSDictionary); }
 for (let i = 0; i < apps.count; i++) {
   const tile = apps.objectAtIndex(i), data = tile.objectForKey("tile-data");
+  if (!dictionary(data) || !dictionary(data.objectForKey("file-data"))) {
+    tiles.push(ObjC.deepUnwrap(tile));
+    continue;
+  }
   tiles.push({guid: ObjC.unwrap(tile.objectForKey("GUID")),
     url: ObjC.unwrap(data.objectForKey("file-data").objectForKey("_CFURLString")),
     label: ObjC.unwrap(data.objectForKey("file-label")),
@@ -262,7 +283,7 @@ for (let i = 0; i < apps.count; i++) {
 JSON.stringify({tiles, autohide: ObjC.unwrap(defaults.objectForKey("autohide")),
   others: ObjC.deepUnwrap(defaults.objectForKey("persistent-others"))});`], { timeout: 10_000 });
       const result = JSON.parse(inspected.stdout) as {
-        tiles: { guid: number; url: string; label: string; bookmark: string | null; opaque: string }[];
+        tiles: unknown[];
         autohide: boolean;
         others: { "file-label": string }[];
       };
@@ -271,6 +292,8 @@ JSON.stringify({tiles, autohide: ObjC.unwrap(defaults.objectForKey("autohide")),
           { guid: 101, url: pathToFileURL(canonicalAppBundlePath).href, label: "Open Design", bookmark: null, opaque: bookmark },
           { guid: 202, url: pathToFileURL(finder).href, label: "Original label 202", bookmark, opaque: bookmark },
           { guid: 505, url: pathToFileURL(custom).href, label: "Original label 505", bookmark, opaque: bookmark },
+          { GUID: 606, "tile-type": "spacer-tile", "spacer-owned": "unchanged" },
+          { GUID: 707, "tile-type": "file-tile", "tile-data": { "file-label": "Partial tile preserved", "unknown-note": "unchanged" } },
         ],
         autohide: true,
         others: [{ "file-label": "Downloads preserved" }],
