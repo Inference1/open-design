@@ -17,6 +17,17 @@ const lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks
 const nativeDescribe = process.platform === "darwin" && process.env.OD_MAC_NATIVE_ACCEPTANCE === "1"
   ? describe : describe.skip;
 const nativeTemporaryRoot = process.env.RUNNER_TEMP ?? tmpdir();
+const registrationDumpOptions = { timeout: 30_000, maxBuffer: 128 * 1024 * 1024 };
+
+function registrationExcerpt(dump: string, bundleId: string, appPath: string): string {
+  const lines = dump.split("\n");
+  const selected = new Set<number>();
+  for (let index = 0; index < lines.length; index++) {
+    if (!lines[index]?.includes(bundleId) && !lines[index]?.includes(appPath)) continue;
+    for (let nearby = Math.max(0, index - 30); nearby <= Math.min(lines.length - 1, index + 30); nearby++) selected.add(nearby);
+  }
+  return [...selected].sort((a, b) => a - b).map((index) => lines[index]).join("\n");
+}
 
 function xml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -85,19 +96,21 @@ async function launchByBundleId(bundleId: string, markerPath: string, appPath: s
 }> {
   await writeFile(markerPath, "");
   try {
-    const dump = await execNative(lsregister, ["-dump"], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+    const dump = await execNative(lsregister, ["-dump"], registrationDumpOptions);
     expect(dump.stdout).toContain(bundleId);
     expect(dump.stdout).toContain(await realpath(appPath));
     await execNative("/usr/bin/open", ["-W", "-n", "-b", bundleId], { timeout: 15_000 });
   } catch (error) {
-    const dump = await execNative(lsregister, ["-dump"], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+    const dump = await execNative(lsregister, ["-dump"], registrationDumpOptions);
     const diagnostics = await Promise.allSettled([
       execNative(lsregister, ["-lint", appPath], { timeout: 15_000 }),
       execNative("/usr/bin/plutil", ["-lint", join(appPath, "Contents", "Info.plist")], { timeout: 15_000 }),
       execNative("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], { timeout: 15_000 }),
       execNative("/usr/bin/open", ["-W", "-n", appPath], { timeout: 15_000 }),
     ]);
-    await saveEvidence(`registration-failure-${bundleId}`, { bundleId, appPath, dump: dump.stdout, diagnostics });
+    await saveEvidence(`registration-failure-${bundleId}`, {
+      bundleId, appPath, dump: registrationExcerpt(dump.stdout, bundleId, appPath), diagnostics,
+    });
     throw error;
   }
   const marker = (await readFile(markerPath, "utf8")).trim();
@@ -207,7 +220,7 @@ nativeDescribe("macOS native launch entry acceptance", () => {
       });
       const launch = await launchByBundleId(bundleId, markerPath, appPath);
       expect(launch).toEqual({ version: "0.24.1", executablePath: await realpath(executablePath) });
-      const registration = await execNative(lsregister, ["-dump"], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+      const registration = await execNative(lsregister, ["-dump"], registrationDumpOptions);
       expect(registration.stdout).toContain(bundleId);
       expect(registration.stdout).toContain(await realpath(appPath));
       await saveEvidence("launch-services", { bundleId, appPath, launch });
