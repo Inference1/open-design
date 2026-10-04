@@ -188,7 +188,11 @@ async function isCompatibleWindowsOuter(launchPath: string, pointer: LauncherVer
 }
 
 /** Read the same pointer/attempt selection as the packaged launcher, then prove a stable entry addresses that payload. */
-export async function readLauncherLaunchTarget(request: LauncherRootRequest & { platform?: NodeJS.Platform }): Promise<LauncherLaunchTarget> {
+export async function readLauncherLaunchTarget(request: LauncherRootRequest & {
+  /** A live caller may supply this only after validating its running owner PID, executable and active app version. Cold CLI callers omit it. */
+  delegated?: LauncherVersionPointer;
+  platform?: NodeJS.Platform;
+}): Promise<LauncherLaunchTarget> {
   const platform = packagedPlatform(request.platform ?? process.platform);
   const paths = resolveLauncherPaths(request);
   const rawRuntime = await readJson(paths.runtimePath);
@@ -198,7 +202,7 @@ export async function readLauncherLaunchTarget(request: LauncherRootRequest & { 
     const runtime = validateLauncherRuntimeDescriptor(rawRuntime as Parameters<typeof validateLauncherRuntimeDescriptor>[0], paths);
     const rawAttempt = await readJson(paths.attemptsPath);
     const attempted = rawAttempt == null ? null : validateLauncherAttemptDescriptor(rawAttempt as Parameters<typeof validateLauncherAttemptDescriptor>[0], paths);
-    selection = selectLauncherRuntimeTarget({ attempted, runtime });
+    selection = selectLauncherRuntimeTarget({ attempted, delegated: request.delegated ?? null, runtime });
   } catch (error) {
     if (error instanceof LauncherLaunchError) throw error;
     throw new LauncherLaunchError("launcher-invalid-state", `Invalid launcher state: ${error instanceof Error ? error.message : String(error)}`);

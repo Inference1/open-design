@@ -95,6 +95,16 @@ describe("supported launcher entry resolution", () => {
     await expect(readLauncherLaunchTarget(f.request)).resolves.toMatchObject({ ...f.pointer, reason: "last-successful", source: "canonical" });
   });
 
+  it("allows a validated live caller's delegated pointer while the cold CLI still rolls back", async () => {
+    const f = await fixture();
+    await canonical(f);
+    await json(f.paths.runtimePath, { ...f.request, schemaVersion: 1, active: f.pointer, lastSuccessful: { generation: 1, version: "0.20.0" } });
+    await json(f.paths.attemptsPath, { ...f.request, ...f.pointer, schemaVersion: 1 });
+    await expect(readLauncherLaunchTarget(f.request)).rejects.toMatchObject({ code: "launcher-stale-entry" });
+    await expect(readLauncherLaunchTarget({ ...f.request, delegated: f.pointer })).resolves.toMatchObject({ ...f.pointer, reason: "active-delegated", source: "canonical" });
+    await expect(readLauncherLaunchTarget({ ...f.request, delegated: { ...f.pointer, generation: 1 } })).rejects.toMatchObject({ code: "launcher-stale-entry" });
+  });
+
   it("accepts a packaged namespace overridden by the launch environment", async () => {
     const f = await fixture();
     const installed = await canonical(f);
