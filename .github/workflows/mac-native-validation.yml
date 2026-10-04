@@ -3,7 +3,7 @@ name: macOS launch entry acceptance
 on:
   push:
     branches:
-      - validation/macos-launch-entry-fixed
+      - validation/macos-launch-entry-e26c786
 
 permissions:
   contents: read
@@ -104,4 +104,5 @@ jobs:
             ${{ runner.temp }}/mac-tools-pack-*.log
             ${{ runner.temp }}/mac-main/runtime/mac/namespaces/release-beta-mac/logs
             ${{ runner.temp }}/mac-main/runtime/mac/launcher/channels/beta/namespaces/release-beta-mac/*.json
+            ${{ runner.temp }}/mac-main/runtime/mac/launcher/channels/beta/namespaces/release-beta-mac/state/*.json
           if-no-files-found: warn
