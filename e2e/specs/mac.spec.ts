@@ -811,14 +811,16 @@ macDescribe('packaged mac runtime smoke', () => {
           ...(supportedLaunches == null ? {} : { supportedLaunches }),
         };
 
-        // A launcher floor above the installed version still offers an
-        // installer reinstall after canonical promotion. macOS exposes the
-        // DMG open in dry-run mode, then clear-cache must recover the offer.
+        // A promoted package needs a newer installer that satisfies its higher
+        // launcher floor; a legacy outer can reinstall the current release.
+        // macOS exposes the DMG open in dry-run mode, then clear-cache must
+        // recover the offer without changing the installed package.
         if (recoveryPayloadPath != null) {
-          const recoveryMinVersion = resolvePackagedUpdateScenario({
+          const recoveryMinVersion = canonicalLaunch ? resolvePackagedUpdateScenario({
             releaseChannel: updateScenario.channel,
             releaseVersion: updaterVersion,
-          }).fixtureVersion;
+          }).fixtureVersion : updaterVersion;
+          const recoveryVersion = canonicalLaunch ? recoveryMinVersion : updaterVersion;
           await payloadFixture?.close().catch((error: unknown) => {
             console.error('failed to close payload update fixture before recovery', error);
           });
@@ -827,9 +829,9 @@ macDescribe('packaged mac runtime smoke', () => {
             channel: updateScenario.channel,
             controlLauncherVersionMin: recoveryMinVersion,
             controlLauncherVersionUrl: 'https://example.test/updater-recovery',
-            payloadPath: recoveryPayloadPath,
+            ...(canonicalLaunch ? {} : { payloadPath: recoveryPayloadPath }),
             platform: 'mac',
-            version: updaterVersion,
+            version: recoveryVersion,
             workspaceRoot,
           });
           applyPackagedUpdateEnv(process.env, updateScenario, recoveryFixture.info.metadataUrl, { openDryRun: true });
@@ -846,10 +848,10 @@ macDescribe('packaged mac runtime smoke', () => {
             (inspect) =>
               inspect.update?.state === 'downloaded' &&
               inspect.update.artifact?.type === 'dmg' &&
-              inspect.update.availableVersion === updaterVersion,
-            'same-version reinstall downloaded',
+              inspect.update.availableVersion === recoveryVersion,
+            'launcher-floor installer downloaded',
           );
-          if (reinstallReady.update == null) throw new Error('same-version reinstall did not return updater status');
+          if (reinstallReady.update == null) throw new Error('launcher-floor installer did not return updater status');
           expect(reinstallReady.update.currentVersion).toBe(updaterVersion);
           expect(reinstallReady.update.reinstall).toEqual({
             installedVersion: canonicalLaunch ? updaterVersion : updateScenario.expectedCurrentVersion,
@@ -858,7 +860,7 @@ macDescribe('packaged mac runtime smoke', () => {
             url: 'https://example.test/updater-recovery',
           });
 
-          const reinstallPopup = await openReadyUpdaterPrompt(updaterVersion);
+          const reinstallPopup = await openReadyUpdaterPrompt(recoveryVersion);
           expect(reinstallPopup.visible).toBe(true);
           expect(reinstallPopup.installButtonVisible).toBe(true);
           expect(reinstallPopup.reinstallLinkVisible).toBe(true);
@@ -880,13 +882,20 @@ macDescribe('packaged mac runtime smoke', () => {
             (inspect) =>
               inspect.update?.state === 'downloaded' &&
               inspect.update.artifact?.type === 'dmg' &&
+              inspect.update.availableVersion === recoveryVersion &&
               inspect.update.reinstall != null,
             'post-clear reinstall recovery',
           );
           if (recovered.update == null) throw new Error('post-clear recovery did not return updater status');
+          expect(recovered.update.currentVersion).toBe(updaterVersion);
 
           const dryRunInstall = await runToolsPackJson<MacInspectResult>('inspect', ['--update-action', 'install']);
           expect(dryRunInstall.update?.installResult?.dryRun).toBe(true);
+          expect(dryRunInstall.update?.availableVersion).toBe(recoveryVersion);
+          expect(dryRunInstall.update?.currentVersion).toBe(updaterVersion);
+          expect(await assertUpdatedDesktopIdentity(
+            await readDesktopIdentityMarker(), dryRunInstall.launcher, updaterVersion, install.installedAppPath,
+          )).toBe(canonicalLaunch);
 
           // Leave a pristine updater behind for the final stop/uninstall.
           const resetInspect = await runToolsPackJson<MacInspectResult>('inspect', ['--update-action', 'clear-cache']);
