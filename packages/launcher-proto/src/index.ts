@@ -757,3 +757,6 @@ export function selectLauncherRuntimeTarget(input: {
 
   return { pointer: active, reason: "active", selected: true };
 }
+
+export { LauncherLaunchError, readLauncherLaunchTarget, resolveLauncherCliContext } from "./launch-target.js";
+export type { LauncherCliContextOptions, LauncherLaunchTarget } from "./launch-target.js";

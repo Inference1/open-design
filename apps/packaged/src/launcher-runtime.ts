@@ -28,6 +28,8 @@ import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-de
 
 import type { PackagedConfig, PackagedWebOutputMode, RawPackagedConfig } from "./config.js";
 import type { PackagedDesktopLogger } from "./logging.js";
+import { repairMacDockEntries } from "./mac-dock-entry.js";
+import { cleanupConfirmedMacLaunchEntry, promoteMacLaunchEntry } from "./mac-launch-entry.js";
 import { refreshMacApplicationRegistration } from "./mac-launch-services.js";
 import type { PackagedNamespacePaths } from "./paths.js";
 
@@ -45,6 +47,8 @@ type LauncherPayloadManifest = {
 };
 
 export type PackagedLauncherRuntime = {
+  cachedDesktopExecutablePath?: string;
+  canonicalDesktopProcess?: boolean;
   config: PackagedConfig;
   desktopExecutablePath: string | null;
   descriptor: LauncherRuntimeDescriptor;
@@ -150,7 +154,7 @@ async function readJsonFile<T>(path: string): Promise<T> {
 
 function macAppBundlePathFromExecutable(executablePath: string): string | null {
   const marker = ".app/Contents/MacOS/";
-  const index = executablePath.indexOf(marker);
+  const index = executablePath.split(sep).join("/").indexOf(marker);
   if (index < 0) return null;
   return executablePath.slice(0, index + ".app".length);
 }
@@ -512,7 +516,25 @@ export async function resolvePackagedLauncherRuntime(
     });
     const payloadConfig = await resolvePayloadConfig(config, versionPaths, channel);
     if (payloadConfig != null) {
-      const payloadDesktopProcess = await sameExecutablePath(
+      const binding = await readJsonFile<{
+        schemaVersion: number; channel: string; namespace: string; version: string;
+        generation: number; executablePath: string; payloadExecutablePath: string; launchPath: string;
+      }>(join(launcherPaths.namespaceRoot, "launch-entry.json")).catch(() => null);
+      // A copied bundle has a different inode from its cache source. Recognize
+      // it only with a matching committed binding and its own baked version;
+      // otherwise an old installed launcher must still delegate to the cache.
+      const canonicalDesktopProcess = process.platform === "darwin" &&
+        binding?.schemaVersion === LAUNCHER_SCHEMA_VERSION &&
+        binding.channel === channel && binding.namespace === config.namespace &&
+        binding.version === selection.pointer.version &&
+        binding.generation === selection.pointer.generation &&
+        config.appVersion === selection.pointer.version &&
+        binding.launchPath === currentPackageLaunchPath &&
+        (await lstat(currentPackageLaunchPath).catch(() => null))?.isDirectory() === true &&
+        await sameExecutablePath(currentExecutablePath, binding.executablePath) &&
+        await sameExecutablePath(binding.payloadExecutablePath, payloadConfig.desktopExecutablePath);
+      const effectiveExecutablePath = canonicalDesktopProcess ? currentExecutablePath : payloadConfig.desktopExecutablePath;
+      const payloadDesktopProcess = canonicalDesktopProcess || await sameExecutablePath(
         currentExecutablePath,
         payloadConfig.desktopExecutablePath,
       );
@@ -520,7 +542,7 @@ export async function resolvePackagedLauncherRuntime(
         selection.reason === "active-resume" &&
         (handoff == null || !payloadDesktopProcess || !(await sameExecutablePath(
           handoff.payloadExecutablePath,
-          payloadConfig.desktopExecutablePath,
+          effectiveExecutablePath,
         )))
       ) {
         return await resolvePackagedLauncherRuntime(config, paths, {
@@ -561,13 +583,15 @@ export async function resolvePackagedLauncherRuntime(
         )).launchPath
         : (persistedInstall?.launchPath ?? currentPackageLaunchPath);
       return {
-        config: payloadConfig.config,
-        desktopExecutablePath: payloadConfig.desktopExecutablePath,
+        cachedDesktopExecutablePath: payloadConfig.desktopExecutablePath,
+        canonicalDesktopProcess,
+        config: canonicalDesktopProcess ? config : payloadConfig.config,
+        desktopExecutablePath: effectiveExecutablePath,
         descriptor,
         electronNodeCommand: payloadConfig.electronNodeCommand,
         installedLaunchPath,
         launcherPaths,
-        paths: { ...paths, resourceRoot: payloadConfig.config.resourceRoot },
+        paths: canonicalDesktopProcess ? paths : { ...paths, resourceRoot: payloadConfig.config.resourceRoot },
         payloadDesktopProcess,
         selection,
         source: "payload",
@@ -630,6 +654,76 @@ export async function recordPackagedLauncherRuntimeFailedAttempt(
   await armPackagedLauncherRuntimeAttempt(runtime);
 }
 
+/** Run after the predecessor has quit, before launching any new sidecars. */
+export async function preparePackagedMacLaunchEntry(
+  runtime: PackagedLauncherRuntime,
+  logger?: Pick<PackagedDesktopLogger, "warn">,
+): Promise<void> {
+  if (process.platform !== "darwin" || runtime.source !== "payload" || !runtime.selection.selected) return;
+  const sourceExecutablePath = runtime.cachedDesktopExecutablePath ?? runtime.desktopExecutablePath;
+  if (sourceExecutablePath == null || runtime.installedLaunchPath == null) return;
+  // Keep rollback selection reflected in the alias too, while retaining the
+  // failed active attempt as evidence for subsequent launches.
+  const stable = await syncStableLaunchEntry(runtime).catch(() => null);
+  if (stable?.launchPathStatus === "failed") logger?.warn("failed to refresh stable launcher alias");
+  const entry = await promoteMacLaunchEntry({
+    runtimeRoot: runtime.launcherPaths.namespaceRoot,
+    channel: runtime.launcherPaths.channel,
+    namespace: runtime.launcherPaths.namespace,
+    version: runtime.selection.pointer.version,
+    generation: runtime.selection.pointer.generation,
+    sourceExecutablePath,
+    installedLaunchPath: runtime.installedLaunchPath,
+  });
+  if (entry.status === "failed") {
+    logger?.warn("failed to promote macOS application launch entry", { error: entry.error });
+  }
+  if ((entry.status !== "promoted" && entry.status !== "current") || entry.executablePath == null) return;
+  runtime.desktopExecutablePath = entry.executablePath;
+  // Even when its path equals the destination, the current process may still
+  // map the old bundle's executable. Only the resolver's pre-copy version and
+  // binding check prove that this process is already the selected version.
+  runtime.payloadDesktopProcess = runtime.canonicalDesktopProcess === true;
+  const handoff = await readJsonFile<LauncherDesktopHandoffDescriptor>(runtime.launcherPaths.handoffPath)
+    .then((value) => validateLauncherDesktopHandoffDescriptor(value, runtime.launcherPaths))
+    .catch(() => null);
+  if (handoff?.state === "armed" && handoff.target?.version === runtime.selection.pointer.version &&
+    handoff.target.generation === runtime.selection.pointer.generation) {
+    await writeJsonFile(runtime.launcherPaths.handoffPath, { ...handoff, payloadExecutablePath: entry.executablePath });
+  }
+}
+
+async function repairConfirmedMacLaunch(runtime: PackagedLauncherRuntime, logger?: Pick<PackagedDesktopLogger, "warn">): Promise<void> {
+  if (runtime.desktopExecutablePath == null) return;
+  const registration = await refreshMacApplicationRegistration({
+    executablePath: runtime.desktopExecutablePath,
+    ...(runtime.canonicalDesktopProcess ? { versionsRoot: runtime.launcherPaths.versionsRoot } : {}),
+  });
+  if (registration.status === "failed") {
+    logger?.warn("failed to refresh macOS application registration", { error: registration.error });
+  }
+  // Repair only after a canonical process reaches readiness; a failed copy
+  // must never point the user's Dock at an older installed bundle.
+  if (runtime.canonicalDesktopProcess && runtime.installedLaunchPath != null) {
+    const dock = await repairMacDockEntries({
+      canonicalAppBundlePath: runtime.installedLaunchPath,
+      knownAppBundlePaths: [join(runtime.launcherPaths.namespaceRoot, "current", "payload", basename(runtime.installedLaunchPath))],
+      versionsRoot: runtime.launcherPaths.versionsRoot,
+      appBundleName: basename(runtime.installedLaunchPath),
+    });
+    if (dock.status === "failed") logger?.warn("failed to repair macOS Dock launch entries", { error: dock.error });
+    if (runtime.selection.selected) {
+      const cleanup = await cleanupConfirmedMacLaunchEntry({
+        runtimeRoot: runtime.launcherPaths.namespaceRoot,
+        launchPath: runtime.installedLaunchPath,
+        version: runtime.selection.pointer.version,
+        generation: runtime.selection.pointer.generation,
+      });
+      if (cleanup.status === "failed") logger?.warn("failed to remove confirmed macOS launch backup", { error: cleanup.error });
+    }
+  }
+}
+
 export async function confirmPackagedLauncherRuntime(
   runtime: PackagedLauncherRuntime,
   logger?: Pick<PackagedDesktopLogger, "warn">,
@@ -637,6 +731,10 @@ export async function confirmPackagedLauncherRuntime(
   if (runtime.source !== "payload") return;
   if (!runtime.payloadDesktopProcess) return;
   if (runtime.desktopExecutablePath == null) return;
+  if (runtime.selection.selected && runtime.selection.reason === "last-successful") {
+    if (runtime.canonicalDesktopProcess) await repairConfirmedMacLaunch(runtime, logger);
+    return;
+  }
   if (!runtime.selection.selected || (
     runtime.selection.reason !== "active" &&
     runtime.selection.reason !== "active-delegated" &&
@@ -680,12 +778,7 @@ export async function confirmPackagedLauncherRuntime(
   }
   await rm(runtime.launcherPaths.attemptsPath, { force: true });
   await writeJsonFile(runtime.launcherPaths.runtimePath, next);
-  const registration = await refreshMacApplicationRegistration({
-    executablePath: runtime.desktopExecutablePath,
-  });
-  if (registration.status === "failed") {
-    logger?.warn("failed to refresh macOS application registration", { error: registration.error });
-  }
+  await repairConfirmedMacLaunch(runtime, logger);
   await syncStableLaunchEntry(runtime).catch(() => undefined);
 }
 

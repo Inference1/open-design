@@ -89,6 +89,19 @@ describe("refreshMacApplicationRegistration", () => {
       .resolves.toEqual({ status: "failed", error });
   });
 
+  it("removes owned version registrations before registering the canonical app", async () => {
+    const { root, executablePath, appBundlePath } = await createBundle();
+    const versionsRoot = join(root, "versions");
+    await mkdir(join(versionsRoot, "0.24.0", "payload", "Open Design Beta.app"), { recursive: true });
+    await mkdir(join(versionsRoot, "unrelated-directory"), { recursive: true });
+    const exec = vi.fn(async () => undefined);
+    await refreshMacApplicationRegistration({ executablePath, versionsRoot, platform: "darwin", exec });
+    expect(exec.mock.calls.map((call) => (call as unknown as [string, string[]])[1])).toEqual([
+      ["-u", join(versionsRoot, "0.24.0", "payload", "Open Design Beta.app")],
+      ["-f", await realpath(appBundlePath)],
+    ]);
+  });
+
   it("returns a missing bundle failure without starting an OS utility", async () => {
     const { root } = await createBundle();
     const exec = vi.fn(async () => undefined);

@@ -21,6 +21,7 @@ spec (`e2e/specs/mac.spec.ts` / `win.spec.ts` via `release-smoke.ts`),
 | win NSIS interactive UI install | M | human acceptance per `tools/pack/AGENTS.md` |
 | Channel identity (bundle name, registry key, install dir) | U, P | tools-pack `win-identity.test.ts`; specs |
 | First-boot bootstrap (current-package, runtime.json gen0, install.json) | U, P | packaged `launcher-runtime.test.ts`; specs |
+| Daemon-independent packaged CLI entry (`od open`, `od path`, `od --version`) | U | launcher-proto `launch-target.test.ts`; daemon `cli-packaged-launcher.test.ts` + `services/packaged-launcher-cli.test.ts`; [launch contract](../packaged-launcher-cli.md) |
 | Onboarding first run | P | mac/win onboarding smoke (`@electron-smoke`) |
 
 ## B. Steady-state check loop
@@ -48,7 +49,7 @@ spec (`e2e/specs/mac.spec.ts` / `win.spec.ts` via `release-smoke.ts`),
 | Node | Coverage | Owning tests |
 | --- | --- | --- |
 | activate (generation++) → after-quit takeover → confirm | U, P, F | packaged + desktop unit; specs; real-feed loop |
-| macOS application registration after successful confirmation | U, M | packaged `launcher-registration.test.ts` + `mac-launch-services.test.ts`; [native acceptance](macos-launch-services.md) |
+| macOS canonical bundle promotion, alias, registration, and Dock repair | U, P | packaged `mac-launch-entry.test.ts`, `launcher-canonical-entry.test.ts`, `stable-launch-entry.test.ts`, `launcher-registration.test.ts`, `mac-dock-entry.test.ts`, `mac-launch-services.test.ts`, opt-in `mac-native-launch-entry.test.ts`; [native acceptance](macos-launch-services.md) |
 | Renderer quiescence before web/daemon retirement | U | desktop `shutdown.test.ts` P0 ordering/shared-cleanup cases; packaged `protocol.test.ts` no-forward/no-retry/abort cases |
 | Delegated pre-arm (`--od-launcher-delegated-*`) | U | launcher-proto selection; packaged delegation/launch tests; desktop activation test |
 | Crash rollback to lastSuccessful + self-heal on next release | P | mac/win spec `rolls back a crashing payload and self-heals on the next good update` |

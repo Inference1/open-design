@@ -1,62 +1,78 @@
-# macOS registration after payload activation
+# macOS stable application launch entry
 
-The packaged launcher refreshes the confirmed payload's application and URL
-claims with LaunchServices after persisting its successful activation. It
-registers the exact, canonical `.app` bundle with `lsregister -f`; it does not
-recursively register Electron helper apps. Registration has a five-second
-timeout, and a failure is logged without undoing successful activation.
+After a payload is selected, the packaged launcher maintains
+`<namespaceRoot>/current -> versions/<selectedVersion>` and promotes the
+selected app to the physically recorded installation path. Promotion copies
+with `ditto` into a private sibling directory on the same filesystem, then
+uses macOS `renamex_np(RENAME_SWAP)` to atomically exchange existing bundles.
+The original installed version is first retained as a validated launcher
+payload, including its manifest, so first-update rollback remains possible.
 
-This is one part of [#8547](https://github.com/nexu-io/open-design/issues/8547).
-Registration alone does not establish which copy wins a bundle-id lookup when
-older copies are still registered. Migration of real installed bundles, stable
-launch aliases, Dock cleanup, and a launcher CLI are separate work.
+`launch-entry.json` binds the canonical path to a channel, namespace, version,
+generation, and cached payload executable. A canonical process uses its own
+resources only when that binding and its baked version match launcher
+selection. The copy process then exits and starts a fresh process at the
+fixed executable path; it cannot keep running the old mapped executable.
+Delegation and historical handoff markers survive that extra launch.
+
+The old bundle stays in a marked staging directory until the new desktop is
+ready. Failed descriptor publication reverses the exchange. Cleanup validates
+the exact journal, ownership marker, sibling path, and unchanged version before
+removing the backup. Unrelated apps, renamed installations, external symlinks,
+and unexpected cache entries are not overwritten. An unwritable installation
+can continue through the validated `current` alias; promotion failures are logged.
+
+After readiness, LaunchServices unregisters owned cached copies and registers
+the canonical main app with `lsregister -f`. Dock repair keeps the first owned
+pin, points it at the canonical bundle, and removes duplicate owned pins.
+Unrelated tiles, custom copies, binary plist fields, and user ordering survive.
+A concurrent Dock edit aborts the preference write. No pin is added if the app
+was not pinned. Rollback repairs the selected successful entry while retaining
+the failed attempt as evidence, avoiding an endless retry of the bad version.
+
+The supported CLI contract is described in
+[packaged-launcher-cli.md](../packaged-launcher-cli.md). For stable macOS installs,
+`open -b io.open-design.desktop` is the native bundle-ID entry; prerelease and
+beta have distinct channel IDs.
 
 ## Automated coverage
 
-`apps/packaged/tests/launcher-registration.test.ts` checks that registration
-follows persistence of the successful runtime pointer and removal of the launch
-attempt. Failed or skipped confirmations do not register a bundle, and a failed
-registration does not reverse the successful pointer.
-
-`apps/packaged/tests/mac-launch-services.test.ts` checks the exact application
-path, alias resolution, platform gates, command arguments, timeout, and failure
-handling with an injected command runner. These tests do not exercise the
-macOS registration database.
+- `mac-launch-entry.test.ts`: real filesystem fixtures with injected native
+  commands; promotion, first-install retention, copy/exchange/publication
+  failures, ownership validation, idempotence, and protected backup cleanup.
+- `launcher-canonical-entry.test.ts`: canonical process recognition, stale
+  binding rejection, own-resource use, and forced restart after replacement.
+- `payload-desktop-launch.test.ts`: delegated attempt markers survive canonical
+  relaunch; rollback continues to preserve failed-attempt evidence.
+- `mac-dock-entry.test.ts`: owned pin projection, duplicate removal, unrelated
+  preservation, conflict detection, and native command failures.
+- `launcher-registration.test.ts` and `mac-launch-services.test.ts`: success
+  persistence before registration, owned cache deregistration, exact main app,
+  platform gates, and failure handling.
+- `stable-launch-entry.test.ts` and desktop `stable-launch-entry.test.ts`:
+  alias target verification and continued payload-update eligibility.
+- Launcher-proto `launch-target.test.ts` and daemon CLI tests: daemon-independent
+  commands, pointer selection, namespace discovery, and stale entry rejection.
 
 ## Native acceptance
 
-Use the packaged macOS lifecycle harness described in
-[`tools/pack/AGENTS.md`](../../tools/pack/AGENTS.md). Compare the same update
-scenario on the base commit and this branch, using separate test namespaces.
-Include an existing real installed bundle and a supported linked install shape
-when available. Record the installed version, the running payload version, and
-the namespace for each scenario.
+Opt-in `apps/packaged/tests/mac-native-launch-entry.test.ts` executes the actual
+production helpers on macOS. It compiles ad-hoc-signed Mach-O app fixtures and
+covers uncached first install, two upgrades, rollback, descriptor failure,
+`open -b` selecting the expected version at the fixed physical path, and native
+Dock preference repair with opaque binary data. The Dock test uses an isolated
+preferences domain and does not alter the runner's actual Dock.
 
-1. Activate a newer payload and wait for its desktop to become ready. Confirm
-   the successful launcher pointer names that payload and the attempt is gone.
-2. Inspect registration after activation:
+```sh
+OD_MAC_NATIVE_ACCEPTANCE=1 pnpm --filter @open-design/packaged exec vitest run \
+  -c vitest.config.ts tests/mac-native-launch-entry.test.ts
+```
 
-   ```sh
-   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -dump
-   ```
-
-   Check the registered payload bundle path, version, bundle identifier, and URL
-   claims. The registrar should receive only the main `.app`.
-3. Fully stop the app, launch through the installed entry, and check the actual
-   running executable and version. Also check Spotlight and Launchpad. For a
-   stable-channel install, `open -b io.open-design.desktop` is a useful diagnostic:
-   record which copy it selects, especially when an older real bundle remains.
-   A successful registration call is not proof that all these surfaces select
-   the active payload.
-4. Confirm that a failed registration leaves the app usable, the successful
-   pointer intact, and a warning in the packaged desktop log. Existing real
-   bundles and Dock preferences should retain their contents.
-
-Rollback selection retains the launcher's existing confirmation policy. A
-`last-successful` fallback is not a new confirmed activation in this patch, so
-its registration behavior requires separate acceptance when rollback policy
-changes.
-
-Apple describes explicit re-registration after changes to an application's
-LaunchServices information in its
-[Launch Services guide](https://developer.apple.com/library/archive/documentation/Carbon/Conceptual/LaunchServicesConcepts/LSCConcepts/LSCConcepts.html).
+Set `OD_MAC_NATIVE_EVIDENCE_DIR` to save launch and preference evidence. Run on
+both Apple Silicon and Intel macOS. The complete application update flow uses
+`e2e/specs/mac.spec.ts` with `OD_PACKAGED_E2E_MAC_SMOKE_PROFILE=full`, a baseline
+DMG, and a newer payload fixture as documented by
+[`tools/pack/AGENTS.md`](../../tools/pack/AGENTS.md). That profile exercises
+payload activation, cold relaunch, crash rollback, self-healing, and installer
+recovery. Finder drag-install, Spotlight UI, and Launchpad UI remain manual
+acceptance surfaces in the [coverage map](updater-lifecycle.md).
