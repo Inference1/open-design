@@ -102,4 +102,6 @@ jobs:
             ${{ runner.temp }}/mac-packaged-report
             ${{ runner.temp }}/mac-tools-pack-*.json
             ${{ runner.temp }}/mac-tools-pack-*.log
+            ${{ runner.temp }}/mac-main/runtime/mac/namespaces/release-beta-mac/logs
+            ${{ runner.temp }}/mac-main/runtime/mac/launcher/channels/beta/namespaces/release-beta-mac/*.json
           if-no-files-found: warn
