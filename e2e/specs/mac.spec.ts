@@ -2866,8 +2866,15 @@ async function runBundledLauncherCli(
   const bundledNode = await pathExists(nodePath);
   const executable = bundledNode
     ? nodePath : join(appPath, 'Contents', 'MacOS', releaseInstallIdentity(updateScenario.channel).executableName);
+  const staleConfigPath = join(dirname(launcher.runtimePath), 'cli-stale-other-channel-config.json');
+  await writeFile(staleConfigPath, JSON.stringify({
+    ...config,
+    appVersion: launcher.channel === 'stable' ? '1.0.0-beta.1' : '1.0.0',
+    namespace: launcher.namespace,
+    namespaceBaseRoot: join(launcher.root, 'namespaces'),
+  }));
   const env = { ...process.env };
-  delete env.OD_PACKAGED_CONFIG_PATH;
+  env.OD_PACKAGED_CONFIG_PATH = staleConfigPath;
   if (bundledNode) delete env.ELECTRON_RUN_AS_NODE;
   else env.ELECTRON_RUN_AS_NODE = '1';
   const result = await execFileAsync(executable, [
