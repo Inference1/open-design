@@ -209,6 +209,28 @@ describe("cleanupConfirmedMacLaunchEntry", () => {
     expect(exec.mock.calls.map((call) => call.slice(0, 2))).toEqual([["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", ["-u", backup]]]);
   });
 
+  it.each(["stdout", "stderr", "message"] as const)("removes an owned backup when LaunchServices reports it was never registered in %s", async (field) => {
+    const { input, runtimeRoot, installedLaunchPath } = await fixture();
+    const result = await promoteMacLaunchEntry(input);
+    if (result.status !== "promoted") throw new Error("promotion failed");
+    const error = Object.assign(new Error("LaunchServices unregister failed"), { code: 1, [field]: `failed to scan ${result.backupAppBundlePath}: -10814 from spotlight` });
+    const exec = vi.fn(async () => { throw error; });
+    await expect(cleanupConfirmedMacLaunchEntry({ runtimeRoot, launchPath: installedLaunchPath, version, generation: 2, platform: "darwin", exec })).resolves.toEqual({ status: "cleaned" });
+    await expect(lstat(dirname(result.backupAppBundlePath!))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(result.executablePath, "utf8")).toBe(version);
+  });
+
+  it("retains an owned backup when unregistering fails for another reason", async () => {
+    const { input, runtimeRoot, installedLaunchPath } = await fixture();
+    const result = await promoteMacLaunchEntry(input);
+    if (result.status !== "promoted") throw new Error("promotion failed");
+    const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const exec = vi.fn(async () => { throw error; });
+    await expect(cleanupConfirmedMacLaunchEntry({ runtimeRoot, launchPath: installedLaunchPath, version, generation: 2, platform: "darwin", exec })).resolves.toEqual({ status: "failed", error });
+    expect((await lstat(result.backupAppBundlePath!)).isDirectory()).toBe(true);
+    expect(await readFile(result.executablePath, "utf8")).toBe(version);
+  });
+
   it("preserves backups if the confirmed generation does not match", async () => {
     const { input, runtimeRoot, installedLaunchPath, exec } = await fixture();
     const result = await promoteMacLaunchEntry(input);

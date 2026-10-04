@@ -69,6 +69,16 @@ async function pathStatus(path: string): Promise<Awaited<ReturnType<typeof lstat
   }
 }
 
+function isUnregisteredApplication(error: unknown): boolean {
+  if (error == null || typeof error !== "object") return false;
+  const diagnostic = error as { code?: unknown; killed?: unknown; stdout?: unknown; stderr?: unknown; message?: unknown };
+  if (diagnostic.killed === true || typeof diagnostic.code === "string") return false;
+  // Apple's kLSApplicationNotFoundErr means this exact backup has no claim to
+  // remove. Hidden staging bundles are often never indexed by LaunchServices.
+  return [diagnostic.stdout, diagnostic.stderr, diagnostic.message].some((value) =>
+    typeof value === "string" && /(?:^|[\s:=])-10814(?=\s|[),;.]|$)/.test(value));
+}
+
 function managedPayloadBundle(runtimeRoot: string, path: string, bundleName: string): boolean {
   const parts = relative(join(runtimeRoot, "versions"), path).split(sep);
   if (parts.length !== 3 || parts[1] !== "payload" || parts[2] !== bundleName) return false;
@@ -261,7 +271,11 @@ export async function cleanupConfirmedMacLaunchEntry(input: {
     if (!backup.isDirectory() || backup.isSymbolicLink() || await realpath(backupPath) !== backupPath) return { status: "skipped" };
     const current = await configAt(descriptor.launchPath);
     if (current?.appVersion !== descriptor.version || channelOf(current) !== descriptor.channel) return { status: "skipped" };
-    await (input.exec ?? execFileAsync)("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", ["-u", backupPath], execOptions);
+    try {
+      await (input.exec ?? execFileAsync)("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", ["-u", backupPath], execOptions);
+    } catch (error: unknown) {
+      if (!isUnregisteredApplication(error)) throw error;
+    }
     // Re-read ownership immediately before the only recursive deletion.
     if (JSON.stringify(JSON.parse(await readFile(descriptorPath, "utf8"))) !== JSON.stringify(descriptor)) return { status: "skipped" };
     if (await realpath(stageRoot) !== stageRoot || (await lstat(stageRoot)).isSymbolicLink()) return { status: "skipped" };
