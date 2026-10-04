@@ -25,6 +25,8 @@ import {
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
 
 import type { PackagedConfig, PackagedWebOutputMode, RawPackagedConfig } from "./config.js";
+import type { PackagedDesktopLogger } from "./logging.js";
+import { refreshMacApplicationRegistration } from "./mac-launch-services.js";
 import type { PackagedNamespacePaths } from "./paths.js";
 
 type LauncherPayloadManifest = {
@@ -626,7 +628,10 @@ export async function recordPackagedLauncherRuntimeFailedAttempt(
   await armPackagedLauncherRuntimeAttempt(runtime);
 }
 
-export async function confirmPackagedLauncherRuntime(runtime: PackagedLauncherRuntime): Promise<void> {
+export async function confirmPackagedLauncherRuntime(
+  runtime: PackagedLauncherRuntime,
+  logger?: Pick<PackagedDesktopLogger, "warn">,
+): Promise<void> {
   if (runtime.source !== "payload") return;
   if (!runtime.payloadDesktopProcess) return;
   if (runtime.desktopExecutablePath == null) return;
@@ -673,4 +678,10 @@ export async function confirmPackagedLauncherRuntime(runtime: PackagedLauncherRu
   }
   await rm(runtime.launcherPaths.attemptsPath, { force: true });
   await writeJsonFile(runtime.launcherPaths.runtimePath, next);
+  const registration = await refreshMacApplicationRegistration({
+    executablePath: runtime.desktopExecutablePath,
+  });
+  if (registration.status === "failed") {
+    logger?.warn("failed to refresh macOS application registration", { error: registration.error });
+  }
 }

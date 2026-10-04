@@ -446,7 +446,7 @@ async function main(): Promise<void> {
       await retireObsoleteInstalledOuter();
     },
     onDesktopReady(controls) {
-      void confirmPackagedLauncherRuntime(launcherRuntime).catch((error: unknown) => {
+      void confirmPackagedLauncherRuntime(launcherRuntime, packagedLogger ?? undefined).catch((error: unknown) => {
         packagedLogger?.warn("failed to confirm packaged launcher runtime", { error });
       });
       void syncWindowsUninstallDisplayVersion({
@@ -525,7 +525,7 @@ async function main(): Promise<void> {
   await client.start();
   if (deferredDesktop != null) {
     // A deferred headless runtime is a successful launch of this generation.
-    void confirmPackagedLauncherRuntime(launcherRuntime).catch((error: unknown) => {
+    void confirmPackagedLauncherRuntime(launcherRuntime, packagedLogger ?? undefined).catch((error: unknown) => {
       packagedLogger?.warn("failed to confirm packaged launcher runtime", { error });
     });
     watchUserDesktopIntent(app, () => {
