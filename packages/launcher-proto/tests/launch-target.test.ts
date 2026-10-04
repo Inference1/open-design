@@ -119,6 +119,18 @@ describe("supported launcher entry resolution", () => {
     await expect(readLauncherLaunchTarget(f.request)).rejects.toMatchObject({ code: "launcher-invalid-payload" });
   });
 
+  it("rejects a payload directory redirected outside the selected namespace", async () => {
+    const f = await fixture();
+    const external = await tempRoot();
+    const executable = join(external, "Open Design.app", "Contents", "MacOS", "Open Design");
+    await mkdir(dirname(executable), { recursive: true });
+    await writeFile(executable, "unrelated executable");
+    await rm(f.payload.payloadRoot, { recursive: true, force: true });
+    await symlink(external, f.payload.payloadRoot, process.platform === "win32" ? "junction" : "dir");
+    await currentAlias(f);
+    await expect(readLauncherLaunchTarget(f.request)).rejects.toMatchObject({ code: "launcher-invalid-payload" });
+  });
+
   it("rejects cross-channel runtime metadata", async () => {
     const f = await fixture();
     await json(f.paths.runtimePath, { ...f.request, channel: "beta", schemaVersion: 1, active: f.pointer, lastSuccessful: f.pointer });
@@ -129,6 +141,36 @@ describe("supported launcher entry resolution", () => {
     const f = await fixture("win32");
     const executablePath = await currentAlias(f);
     await expect(readLauncherLaunchTarget(f.request)).resolves.toMatchObject({ executablePath, launchPath: executablePath, source: "current-alias" });
+  });
+
+  it("uses a compatible Windows installed outer after a payload update without a synthetic current junction", async () => {
+    const f = await fixture("win32");
+    const launchPath = join(f.request.root, "Installed", "Open Design.exe");
+    await mkdir(dirname(launchPath), { recursive: true });
+    await writeFile(launchPath, "installed outer");
+    await json(join(dirname(launchPath), "resources", "open-design-config.json"), { appVersion: "0.20.0", namespace: f.request.namespace });
+    await json(f.paths.installPath, { ...f.request, schemaVersion: 1, launchPath });
+    await expect(readLauncherLaunchTarget(f.request)).resolves.toMatchObject({
+      executablePath: launchPath, launchPath, source: "installed", version: f.pointer.version,
+      payloadExecutablePath: f.executablePath,
+    });
+  });
+
+  it.each(["0.16.9", "0.17.0-beta.1", "0.20.0-beta.1", "100.0.0", "unknown"])("rejects a Windows outer with incompatible installed version %s", async (appVersion) => {
+    const f = await fixture("win32");
+    const launchPath = join(f.request.root, "Installed", "Open Design.exe");
+    await mkdir(dirname(launchPath), { recursive: true });
+    await writeFile(launchPath, "installed outer");
+    await json(join(dirname(launchPath), "resources", "open-design-config.json"), { appVersion });
+    await json(f.paths.installPath, { ...f.request, schemaVersion: 1, launchPath });
+    await expect(readLauncherLaunchTarget(f.request)).rejects.toMatchObject({ code: "launcher-stale-entry" });
+  });
+
+  it("rejects a Windows installed outer recorded inside the version cache", async () => {
+    const f = await fixture("win32");
+    await json(join(dirname(f.executablePath), "resources", "open-design-config.json"), { appVersion: "0.20.0" });
+    await json(f.paths.installPath, { ...f.request, schemaVersion: 1, launchPath: f.executablePath });
+    await expect(readLauncherLaunchTarget(f.request)).rejects.toMatchObject({ code: "launcher-stale-entry" });
   });
 });
 

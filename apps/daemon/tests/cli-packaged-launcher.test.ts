@@ -47,7 +47,7 @@ async function fixture() {
     schemaVersion: LAUNCHER_SCHEMA_VERSION,
   }));
   await symlink(payload.versionRoot, join(paths.namespaceRoot, 'current'), process.platform === 'win32' ? 'junction' : 'dir');
-  return { channel, executablePath: join(paths.namespaceRoot, 'current', relativeExecutable), namespace, root, version };
+  return { channel, executablePath: join(paths.namespaceRoot, 'current', relativeExecutable), namespace, paths, root, version };
 }
 
 async function runCli(args: string[]) {
@@ -82,5 +82,20 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'win32')('
     const result = await runCli(['--version', '--root', installed.root, '--channel', installed.channel, '--namespace', installed.namespace, '--json']);
     expect(result.code, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ executablePath: installed.executablePath, version: installed.version });
+  });
+
+  it.skipIf(process.platform !== 'win32')('resolves the Windows installed outer after an update without a current junction', async () => {
+    const installed = await fixture();
+    await rm(join(installed.paths.namespaceRoot, 'current'));
+    const executablePath = join(installed.root, 'Installed', 'Open Design.exe');
+    await mkdir(join(dirname(executablePath), 'resources'), { recursive: true });
+    await writeFile(executablePath, 'installed launcher fixture');
+    await writeFile(join(dirname(executablePath), 'resources', 'open-design-config.json'), JSON.stringify({ appVersion: '0.20.0-beta.1' }));
+    await writeFile(installed.paths.installPath, JSON.stringify({ channel: installed.channel, namespace: installed.namespace, schemaVersion: LAUNCHER_SCHEMA_VERSION, launchPath: executablePath }));
+    for (const command of ['path', '--version']) {
+      const result = await runCli([command, '--root', installed.root, '--channel', installed.channel, '--namespace', installed.namespace, '--json']);
+      expect(result.code, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ executablePath, version: installed.version, source: 'installed' });
+    }
   });
 });

@@ -2,10 +2,11 @@ import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import { releaseChannelFromNamespace, releaseChannelFromVersion, releaseInstallIdentity, releaseNamespace } from "@open-design/release";
+import { parseReleaseVersion, releaseChannelFromNamespace, releaseChannelFromVersion, releaseInstallIdentity, releaseNamespace } from "@open-design/release";
 import {
   LAUNCHER_SCHEMA_VERSION,
   LAUNCHER_STABLE_ALIAS,
+  compareLauncherVersions,
   normalizeLauncherChannel,
   normalizeLauncherNamespace,
   resolveLauncherPaths,
@@ -156,6 +157,36 @@ async function matchesConfig(launchPath: string, executablePath: string, pointer
     && (releaseChannelFromVersion(pointer.version) ?? releaseChannelFromNamespace(context.namespace, "default") ?? "stable") === context.channel;
 }
 
+// Conservative compatibility floor, verified against this release's schema-1
+// pointer/attempt selection and pre-sidecar payload desktop delegation:
+// https://github.com/nexu-io/open-design/blob/open-design-v0.17.0/apps/packaged/src/index.ts
+// https://github.com/nexu-io/open-design/blob/open-design-v0.17.0/apps/packaged/src/launcher-runtime.ts
+// This local protocol floor is independent of a feed's installer-reseed policy.
+const WINDOWS_PAYLOAD_LAUNCHER_MIN_VERSION = "0.17.0";
+
+async function isCompatibleWindowsOuter(launchPath: string, pointer: LauncherVersionPointer, context: LauncherRootRequest): Promise<boolean> {
+  if (!isAbsolute(launchPath) || !launchPath.toLowerCase().endsWith(".exe")) return false;
+  const paths = resolveLauncherPaths(context);
+  const [info, executablePath, versionsRoot, outerRoot] = await Promise.all([
+    lstat(launchPath).catch(() => null), realpath(launchPath).catch(() => null),
+    realpath(paths.versionsRoot).catch(() => null), realpath(dirname(launchPath)).catch(() => null),
+  ]);
+  if (!info?.isFile() || info.isSymbolicLink() || executablePath == null || versionsRoot == null || outerRoot == null
+    || inside(paths.versionsRoot, launchPath) || inside(versionsRoot, executablePath)) return false;
+  const configPath = join(dirname(launchPath), "resources", "open-design-config.json");
+  const [configInfo, resolvedConfigPath] = await Promise.all([lstat(configPath).catch(() => null), realpath(configPath).catch(() => null)]);
+  if (!configInfo?.isFile() || configInfo.isSymbolicLink() || resolvedConfigPath !== join(outerRoot, "resources", "open-design-config.json")) return false;
+  const config = record(await readJson(configPath));
+  if (typeof config?.appVersion !== "string") return false;
+  try {
+    const installedVersion = parseReleaseVersion(config.appVersion, paths.channel).releaseVersion;
+    return compareLauncherVersions(installedVersion, WINDOWS_PAYLOAD_LAUNCHER_MIN_VERSION) >= 0
+      && compareLauncherVersions(installedVersion, pointer.version) <= 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Read the same pointer/attempt selection as the packaged launcher, then prove a stable entry addresses that payload. */
 export async function readLauncherLaunchTarget(request: LauncherRootRequest & { platform?: NodeJS.Platform }): Promise<LauncherLaunchTarget> {
   const platform = packagedPlatform(request.platform ?? process.platform);
@@ -190,8 +221,10 @@ export async function readLauncherLaunchTarget(request: LauncherRootRequest & { 
     const info = await lstat(executable).catch(() => null);
     const resolved = await realpath(executable).catch(() => null);
     const resolvedRoot = await realpath(versionPaths.payloadRoot).catch(() => null);
+    const namespaceRoot = await realpath(paths.namespaceRoot).catch(() => null);
     if (!inside(versionPaths.payloadRoot, executable) || !info?.isFile() || info.isSymbolicLink()
-      || resolved == null || resolvedRoot == null || !inside(resolvedRoot, resolved)) {
+      || resolved == null || resolvedRoot == null || namespaceRoot == null
+      || resolvedRoot !== join(namespaceRoot, "versions", pointer.version, "payload") || !inside(resolvedRoot, resolved)) {
       throw new LauncherLaunchError("launcher-invalid-payload", `The selected launcher payload ${pointer.version} has no valid executable.`);
     }
     payloadExecutablePath = executable;
@@ -217,14 +250,17 @@ export async function readLauncherLaunchTarget(request: LauncherRootRequest & { 
       return result(launchPath, executablePath, "current-alias");
     }
   }
-  if (payloadExecutablePath == null) {
+  if (payloadExecutablePath == null || platform === "win32") {
     const installed = record(await readJson(paths.installPath));
     if (installed?.schemaVersion === LAUNCHER_SCHEMA_VERSION && installed.channel === paths.channel && installed.namespace === paths.namespace && typeof installed.launchPath === "string") {
       const launchPath = installed.launchPath;
       const executablePath = platform === "darwin"
         ? join(launchPath, "Contents", "MacOS", releaseInstallIdentity(paths.channel).executableName)
         : launchPath;
-      if (!inside(paths.versionsRoot, launchPath) && await matchesConfig(launchPath, executablePath, pointer, paths, platform)) {
+      const validInstalled = platform === "win32" && payloadExecutablePath != null
+        ? await isCompatibleWindowsOuter(launchPath, pointer, paths)
+        : !inside(paths.versionsRoot, launchPath) && await matchesConfig(launchPath, executablePath, pointer, paths, platform);
+      if (validInstalled) {
         return result(launchPath, executablePath, "installed");
       }
     }
