@@ -815,14 +815,14 @@ export async function confirmPackagedLauncherRuntime(
  * install path silently regresses to whatever version was installed on day
  * one.
  *
- * Once an activation is confirmed we therefore maintain:
- *   1. `namespaces/<ns>/current` -> `versions/<active>` — re-pointed
- *      atomically on every update, so scripts and MCP/automation integrations
- *      get a path that never moves;
+ * For the selected payload this helper maintains:
+ *   1. `namespaces/<ns>/current` -> `versions/<selected>` — re-pointed
+ *      atomically on selection, so scripts and MCP/automation integrations
+ *      get a path that never moves, including during rollback;
  *   2. `install.json` launchPath as a symlink to `current/payload/<App>.app`
  *      when that path is absent or is already a symlink. An existing *real*
- *      bundle is never replaced here — that needs user consent and belongs to
- *      the obsolete-installed-outer retirement flow.
+ *      bundle is preserved by this helper; preparePackagedMacLaunchEntry
+ *      separately promotes the validated payload there before a fresh launch.
  */
 export type StableLaunchEntryStatus =
   | "failed"

@@ -83,6 +83,37 @@ describe('native packaged launch requests', () => {
     expect(child.unref).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    '/caller/namespaces/release-beta/data',
+    '/caller/namespaces/release-beta/data/',
+    'C:\\caller\\namespaces\\release-beta\\data',
+    'C:\\caller\\namespaces\\release-beta\\data\\',
+  ])('does not launch another namespace with the calling daemon data root: %s', async (dataRoot) => {
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    native.spawn.mockImplementation(() => { queueMicrotask(() => child.emit('spawn')); return child; });
+    const env = { OD_DATA_DIR: dataRoot };
+
+    await openLauncherTarget(target, { platform: 'darwin', env });
+
+    expect(native.spawn.mock.calls[0]![2].env.OD_DATA_DIR).toBeUndefined();
+    expect(native.spawn.mock.calls[0]![2].env.OD_PACKAGED_NAMESPACE).toBe(target.namespace);
+    expect(env.OD_DATA_DIR).toBe(dataRoot);
+  });
+
+  it.each([
+    '/custom-data',
+    'C:\\custom-data',
+    '/caller/namespaces/release-stable/data/',
+    'C:\\caller\\namespaces\\release-stable\\data\\',
+  ])('preserves a valid explicit or matching namespace data override: %s', async (dataRoot) => {
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    native.spawn.mockImplementation(() => { queueMicrotask(() => child.emit('spawn')); return child; });
+
+    await openLauncherTarget(target, { platform: 'darwin', env: { OD_DATA_DIR: dataRoot } });
+
+    expect(native.spawn.mock.calls[0]![2].env.OD_DATA_DIR).toBe(dataRoot);
+  });
+
   it('propagates an OS launch rejection', async () => {
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
     native.spawn.mockImplementation(() => { queueMicrotask(() => child.emit('error', new Error('open rejected'))); return child; });

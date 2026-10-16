@@ -24,9 +24,12 @@ stopped CLI continues to follow failed-attempt rollback selection.
 The old bundle stays in a marked staging directory until the new desktop is
 ready. Failed descriptor publication reverses the exchange. Cleanup validates
 the exact journal, ownership marker, sibling path, and unchanged version before
-removing the backup. Unrelated apps, renamed installations, external symlinks,
-and unexpected cache entries are not overwritten. An unwritable installation
-can continue through the validated `current` alias; promotion failures are logged.
+removing the backup. The promotion helper rejects unrelated app bundles,
+renamed installations, unmanaged symlink targets, and unexpected cache entries.
+The inherited stable-alias step can repoint an existing symlink at the recorded
+install path before promotion; it does not modify that symlink's old destination.
+An unwritable installation can continue through the validated `current` alias;
+promotion failures are logged.
 
 After readiness, LaunchServices unregisters owned cached copies and registers
 the canonical main app with `lsregister -f`. Dock repair keeps the first owned
