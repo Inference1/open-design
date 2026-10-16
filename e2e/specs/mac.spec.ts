@@ -2884,6 +2884,7 @@ async function runBundledLauncherCli(
   }));
   const env = { ...process.env };
   env.OD_PACKAGED_CONFIG_PATH = staleConfigPath;
+  env.OD_DATA_DIR = join(launcher.root, 'namespaces', `${launcher.namespace}-caller`, 'data');
   if (bundledNode) delete env.ELECTRON_RUN_AS_NODE;
   else env.ELECTRON_RUN_AS_NODE = '1';
   const result = await execFileAsync(executable, [

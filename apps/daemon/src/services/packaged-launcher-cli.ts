@@ -53,7 +53,12 @@ function parseFlags(args: string[]): CliFlags {
 
 export async function openLauncherTarget(target: LauncherLaunchTarget, options: { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {}): Promise<void> {
   const platform = options.platform ?? process.platform;
-  const env = { ...options.env ?? process.env, OD_PACKAGED_NAMESPACE: target.namespace, OD_PACKAGED_NAMESPACE_BASE_ROOT: join(target.root, 'namespaces') };
+  const env: NodeJS.ProcessEnv = { ...options.env ?? process.env, OD_PACKAGED_NAMESPACE: target.namespace, OD_PACKAGED_NAMESPACE_BASE_ROOT: join(target.root, 'namespaces') };
+  // Agent shells inherit the daemon's final scoped data root. A different
+  // namespace must resolve its own root; explicit base and matching overrides
+  // remain valid packaged launch inputs.
+  const dataNamespace = /(?:^|[\\/])namespaces[\\/]+([^\\/]+)[\\/]+data[\\/]*$/.exec(env.OD_DATA_DIR?.trim() ?? '')?.[1];
+  if (dataNamespace != null && dataNamespace !== target.namespace) delete env.OD_DATA_DIR;
   // A launcher command can itself run under an agent's Node/sidecar environment.
   // The app must enter desktop mode instead of inheriting that process identity.
   // Config has already selected the target's identity and root; the child must

@@ -32,6 +32,8 @@ on stderr and a nonzero exit code.
 process. It supplies the selected packaged namespace and installation root
 and removes the calling agent's Node/sidecar identity, so custom namespaces
 work without depending on LaunchServices environment forwarding.
+An inherited data directory scoped to another namespace is also removed;
+explicit base-directory and matching-namespace overrides are preserved.
 
 `od version --json` retains its existing meaning: report `/api/version` from
 the running daemon. It is useful when comparing the currently running process
